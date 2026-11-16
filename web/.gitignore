@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.cache/
+.output/
+src/.umi/
+src/.umi-production/
+test-results/
+playwright-report/

@@ -1,0 +1,3736 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "大客售后事件系统",
+    "version": "0.2.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Health",
+        "description": "确认服务可访问本地数据库，不回传主机、账户或密码。",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config": {
+      "get": {
+        "tags": [
+          "config"
+        ],
+        "summary": "Get Config",
+        "description": "读取界面缺省与客户统计，不返回敏感运行配置。",
+        "operationId": "get_config",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/events": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "List Events",
+        "description": "按客户、分析流和可选事件类型读取当前事件。",
+        "operationId": "list_events",
+        "parameters": [
+          {
+            "name": "uid",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
+          },
+          {
+            "name": "stream",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stream"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 32
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Type"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/events/{event_id}": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Get Event",
+        "description": "取得事件及证据历史；指定错误客户或分析流时不返回事件。",
+        "operationId": "get_event",
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "title": "Event Id"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
+          },
+          {
+            "name": "stream",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stream"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/events/{event_id}/changes": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Get Event Changes",
+        "description": "必须明确客户和分析范围，读取已保存批次与版本；不运行处理。",
+        "operationId": "get_event_changes",
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "title": "Event Id"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "title": "Uid"
+            }
+          },
+          {
+            "name": "stream",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "title": "Stream"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "execution_offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Execution Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventChangesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/runs": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "List Runs",
+        "description": "任务列表提供状态与计数，完整周期详情通过单条任务接口读取。",
+        "operationId": "list_runs",
+        "parameters": [
+          {
+            "name": "uid",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "const": "official",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Mode"
+            }
+          },
+          {
+            "name": "stream",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stream"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Create Run",
+        "description": "校验工作量后保存任务，处理在后台逐周期执行。",
+        "operationId": "create_run",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Get Run",
+        "description": "返回持久化进度、失败原因及已完成周期，刷新页面不会丢失。",
+        "operationId": "get_run",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
+          },
+          {
+            "name": "stream",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stream"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ChangeEvidence": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "message_id": {
+            "type": "string",
+            "title": "Message Id"
+          },
+          "digest": {
+            "type": "string",
+            "title": "Digest"
+          },
+          "conversation_id": {
+            "type": "string",
+            "title": "Conversation Id"
+          },
+          "send_time": {
+            "type": "string",
+            "title": "Send Time"
+          },
+          "quote": {
+            "type": "string",
+            "title": "Quote"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "message_id",
+          "digest",
+          "conversation_id",
+          "send_time",
+          "quote"
+        ],
+        "title": "ChangeEvidence",
+        "description": "变化当时保存的证据定位和引文，不拿后来编辑的正文替换。"
+      },
+      "ConfigResponse": {
+        "properties": {
+          "uid": {
+            "type": "string",
+            "title": "Uid"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start"
+          },
+          "end": {
+            "type": "string",
+            "title": "End"
+          },
+          "interval": {
+            "type": "string",
+            "title": "Interval"
+          },
+          "context_lookback": {
+            "type": "string",
+            "title": "Context Lookback"
+          },
+          "match_window": {
+            "type": "string",
+            "title": "Match Window"
+          },
+          "ingest_lookback": {
+            "type": "string",
+            "title": "Ingest Lookback"
+          },
+          "closed_grace": {
+            "type": "string",
+            "title": "Closed Grace"
+          },
+          "event_types": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Event Types"
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "stub",
+              "xhub"
+            ],
+            "title": "Provider",
+            "default": "stub"
+          },
+          "customers": {
+            "items": {
+              "$ref": "#/components/schemas/CustomerResponse"
+            },
+            "type": "array",
+            "title": "Customers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "uid",
+          "start",
+          "end",
+          "interval",
+          "context_lookback",
+          "match_window",
+          "ingest_lookback",
+          "closed_grace",
+          "event_types",
+          "provider",
+          "customers"
+        ],
+        "title": "ConfigResponse",
+        "description": "界面可见配置；不返回数据库密码、连接串或内部取数响应。"
+      },
+      "ContinuityEvidence": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "message_id": {
+            "type": "string",
+            "title": "Message Id"
+          },
+          "digest": {
+            "type": "string",
+            "title": "Digest"
+          },
+          "conversation_id": {
+            "type": "string",
+            "title": "Conversation Id"
+          },
+          "send_time": {
+            "type": "string",
+            "title": "Send Time"
+          },
+          "quote": {
+            "type": "string",
+            "title": "Quote"
+          },
+          "sender_id": {
+            "type": "string",
+            "title": "Sender Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "message_id",
+          "digest",
+          "conversation_id",
+          "send_time",
+          "quote",
+          "sender_id"
+        ],
+        "title": "ContinuityEvidence",
+        "description": "恢复或再次发生的直接依据，保留当时的账号与消息版本。"
+      },
+      "ConversationRef": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "platform": {
+            "type": "string",
+            "title": "Platform"
+          },
+          "platform_label": {
+            "type": "string",
+            "title": "Platform Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "platform",
+          "platform_label"
+        ],
+        "title": "ConversationRef",
+        "description": "事件覆盖到的群聊，供列表和筛选展示，不改变事件身份。"
+      },
+      "CustomerRecoveryEvidence": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "message_id": {
+            "type": "string",
+            "title": "Message Id"
+          },
+          "digest": {
+            "type": "string",
+            "title": "Digest"
+          },
+          "conversation_id": {
+            "type": "string",
+            "title": "Conversation Id"
+          },
+          "send_time": {
+            "type": "string",
+            "title": "Send Time"
+          },
+          "quote": {
+            "type": "string",
+            "title": "Quote"
+          },
+          "sender_id": {
+            "type": "string",
+            "title": "Sender Id"
+          },
+          "sender_role": {
+            "type": "string",
+            "const": "customer",
+            "title": "Sender Role"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "message_id",
+          "digest",
+          "conversation_id",
+          "send_time",
+          "quote",
+          "sender_id",
+          "sender_role"
+        ],
+        "title": "CustomerRecoveryEvidence",
+        "description": "已确认客户账号的明确反馈，不采用展示身份回退。"
+      },
+      "CustomerResponse": {
+        "properties": {
+          "uid": {
+            "type": "string",
+            "title": "Uid"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "message_count": {
+            "type": "integer",
+            "title": "Message Count"
+          },
+          "event_count": {
+            "type": "integer",
+            "title": "Event Count"
+          },
+          "stream": {
+            "type": "string",
+            "title": "Stream"
+          }
+        },
+        "type": "object",
+        "required": [
+          "uid",
+          "label",
+          "message_count",
+          "event_count",
+          "stream"
+        ],
+        "title": "CustomerResponse",
+        "description": "官方来源客户的消息、事件统计和分析范围。"
+      },
+      "CycleResponse": {
+        "properties": {
+          "uid": {
+            "type": "string",
+            "title": "Uid"
+          },
+          "stream": {
+            "type": "string",
+            "title": "Stream"
+          },
+          "window": {
+            "$ref": "#/components/schemas/TimeWindow"
+          },
+          "ingested": {
+            "type": "integer",
+            "title": "Ingested",
+            "default": 0
+          },
+          "processed": {
+            "type": "integer",
+            "title": "Processed",
+            "default": 0
+          },
+          "created": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Created"
+          },
+          "updated": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Updated"
+          },
+          "review": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewResponse"
+            },
+            "type": "array",
+            "title": "Review"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/EventResponse"
+            },
+            "type": "array",
+            "title": "Events"
+          },
+          "watermark": {
+            "$ref": "#/components/schemas/WatermarkResponse"
+          },
+          "filter_audit": {
+            "items": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Filter Audit"
+          },
+          "recovered_from_history": {
+            "type": "boolean",
+            "title": "Recovered From History",
+            "default": false
+          },
+          "counts_complete": {
+            "type": "boolean",
+            "title": "Counts Complete",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "uid",
+          "stream",
+          "window",
+          "ingested",
+          "processed",
+          "created",
+          "updated",
+          "review",
+          "events",
+          "watermark",
+          "filter_audit",
+          "recovered_from_history",
+          "counts_complete"
+        ],
+        "title": "CycleResponse",
+        "description": "一个周期的实际变化；恢复中断记录时明确标记来源。"
+      },
+      "ErrorResponse": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail"
+        ],
+        "title": "ErrorResponse",
+        "description": "统一安全错误格式，避免验证错误回显请求或聊天内容。"
+      },
+      "EventChange": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "progress",
+              "confirmation",
+              "correction"
+            ],
+            "title": "Kind"
+          },
+          "effect": {
+            "type": "string",
+            "enum": [
+              "progress",
+              "confirmation",
+              "correction",
+              "evidence_only"
+            ],
+            "title": "Effect"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "replaces": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaces"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/ChangeEvidence"
+            },
+            "type": "array",
+            "title": "Evidence"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "effect",
+          "text",
+          "replaces",
+          "evidence"
+        ],
+        "title": "EventChange",
+        "description": "新增事实、摘要局部替换及其实际影响。"
+      },
+      "EventChangeBatch": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "cycle_index": {
+            "type": "integer",
+            "title": "Cycle Index"
+          },
+          "window": {
+            "$ref": "#/components/schemas/TimeWindow"
+          },
+          "processed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processed"
+          },
+          "counts_complete": {
+            "type": "boolean",
+            "title": "Counts Complete"
+          },
+          "recovered_from_history": {
+            "type": "boolean",
+            "title": "Recovered From History"
+          },
+          "created": {
+            "type": "boolean",
+            "title": "Created"
+          },
+          "updated": {
+            "type": "boolean",
+            "title": "Updated"
+          },
+          "attributions": {
+            "items": {
+              "$ref": "#/components/schemas/RecordedAttribution"
+            },
+            "type": "array",
+            "title": "Attributions"
+          },
+          "revision_indexes": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Revision Indexes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_id",
+          "cycle_index",
+          "window",
+          "processed",
+          "counts_complete",
+          "recovered_from_history",
+          "created",
+          "updated",
+          "attributions",
+          "revision_indexes"
+        ],
+        "title": "EventChangeBatch",
+        "description": "已持久化且有本事件关联依据的一个周期，不代表每个阶段都被记录。"
+      },
+      "EventChangesResponse": {
+        "properties": {
+          "uid": {
+            "type": "string",
+            "title": "Uid"
+          },
+          "stream": {
+            "type": "string",
+            "title": "Stream"
+          },
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "batches": {
+            "items": {
+              "$ref": "#/components/schemas/EventChangeBatch"
+            },
+            "type": "array",
+            "title": "Batches"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/ScopedChangeTask"
+            },
+            "type": "array",
+            "title": "Tasks"
+          },
+          "revisions": {
+            "items": {
+              "$ref": "#/components/schemas/EventRevision"
+            },
+            "type": "array",
+            "title": "Revisions"
+          },
+          "total_runs": {
+            "type": "integer",
+            "title": "Total Runs"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "next_offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Offset"
+          },
+          "executions": {
+            "items": {
+              "$ref": "#/components/schemas/EventExecution"
+            },
+            "type": "array",
+            "title": "Executions"
+          },
+          "execution_records_available": {
+            "type": "boolean",
+            "title": "Execution Records Available",
+            "default": false
+          },
+          "total_executions": {
+            "type": "integer",
+            "title": "Total Executions",
+            "default": 0
+          },
+          "execution_offset": {
+            "type": "integer",
+            "title": "Execution Offset",
+            "default": 0
+          },
+          "next_execution_offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Execution Offset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "uid",
+          "stream",
+          "event_id",
+          "batches",
+          "tasks",
+          "revisions",
+          "total_runs",
+          "offset",
+          "next_offset",
+          "executions",
+          "execution_records_available",
+          "total_executions",
+          "execution_offset",
+          "next_execution_offset"
+        ],
+        "title": "EventChangesResponse",
+        "description": "只读变化面板；任务分页与事件版本分别提供，不伪造执行追踪。"
+      },
+      "EventExecution": {
+        "properties": {
+          "attempt_id": {
+            "type": "string",
+            "title": "Attempt Id"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "window_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Index"
+          },
+          "window": {
+            "$ref": "#/components/schemas/TimeWindow"
+          },
+          "outcome": {
+            "type": "string",
+            "title": "Outcome"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "retry_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry Of"
+          },
+          "retry_link_unavailable": {
+            "type": "boolean",
+            "title": "Retry Link Unavailable"
+          },
+          "related_by": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Related By"
+          },
+          "error_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Type"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutionStage"
+            },
+            "type": "array",
+            "title": "Stages"
+          },
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutionInput"
+            },
+            "type": "array",
+            "title": "Inputs"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutionCandidate"
+            },
+            "type": "array",
+            "title": "Candidates"
+          },
+          "contexts": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutionContext"
+            },
+            "type": "array",
+            "title": "Contexts"
+          },
+          "context_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Context Reasons"
+          },
+          "context_omitted": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Omitted"
+          },
+          "suggestions": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutionSuggestion"
+            },
+            "type": "array",
+            "title": "Suggestions"
+          },
+          "decisions": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutionDecision"
+            },
+            "type": "array",
+            "title": "Decisions"
+          },
+          "commit_status": {
+            "type": "string",
+            "title": "Commit Status"
+          },
+          "receipt_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Kind"
+          },
+          "receipt_prepared_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Prepared At"
+          },
+          "processed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processed"
+          },
+          "created": {
+            "type": "boolean",
+            "title": "Created"
+          },
+          "updated": {
+            "type": "boolean",
+            "title": "Updated"
+          },
+          "revision_indexes": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Revision Indexes"
+          },
+          "revision_link_unavailable": {
+            "type": "boolean",
+            "title": "Revision Link Unavailable"
+          },
+          "delivery": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutionDelivery"
+            },
+            "type": "array",
+            "title": "Delivery"
+          }
+        },
+        "type": "object",
+        "required": [
+          "attempt_id",
+          "run_id",
+          "window_index",
+          "window",
+          "outcome",
+          "created_at",
+          "finished_at",
+          "retry_of",
+          "retry_link_unavailable",
+          "related_by",
+          "error_type",
+          "stages",
+          "inputs",
+          "candidates",
+          "contexts",
+          "context_reasons",
+          "context_omitted",
+          "suggestions",
+          "decisions",
+          "commit_status",
+          "receipt_kind",
+          "receipt_prepared_at",
+          "processed",
+          "created",
+          "updated",
+          "revision_indexes",
+          "revision_link_unavailable",
+          "delivery"
+        ],
+        "title": "EventExecution",
+        "description": "同客户同范围的当前事件关联执行；执行状态、提交收据和展示状态独立。"
+      },
+      "EventListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EventResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "EventListResponse",
+        "description": "当前客户、当前分析流的事件列表。"
+      },
+      "EventResponse": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "uid": {
+            "type": "string",
+            "title": "Uid"
+          },
+          "stream": {
+            "type": "string",
+            "title": "Stream"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "topic_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic Key"
+          },
+          "start_time": {
+            "type": "string",
+            "title": "Start Time"
+          },
+          "end_time": {
+            "type": "string",
+            "title": "End Time"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "severity": {
+            "type": "string",
+            "title": "Severity"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "created_on": {
+            "type": "string",
+            "title": "Created On"
+          },
+          "assignees": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Assignees"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceResponse"
+            },
+            "type": "array",
+            "title": "Evidence"
+          },
+          "attributes": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Attributes"
+          },
+          "extensions": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Extensions"
+          },
+          "review_flag": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Flag"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "recovery": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecoveryConfirmation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recurrence_of": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecurrenceLink"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schema_version": {
+            "type": "integer",
+            "title": "Schema Version",
+            "default": 1
+          },
+          "updated_by": {
+            "items": {
+              "$ref": "#/components/schemas/EventRevision"
+            },
+            "type": "array",
+            "title": "Updated By"
+          },
+          "conversations": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationRef"
+            },
+            "type": "array",
+            "title": "Conversations"
+          },
+          "platforms": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Platforms"
+          }
+        },
+        "type": "object",
+        "required": [
+          "event_id",
+          "uid",
+          "stream",
+          "type",
+          "topic_key",
+          "start_time",
+          "end_time",
+          "status",
+          "severity",
+          "summary",
+          "created_on",
+          "assignees",
+          "evidence",
+          "attributes",
+          "extensions",
+          "review_flag",
+          "closed_at",
+          "recovery",
+          "recurrence_of",
+          "schema_version",
+          "updated_by",
+          "conversations",
+          "platforms"
+        ],
+        "title": "EventResponse",
+        "description": "事件详情及其变更历史；周期结果中的事件保持当时的版本。"
+      },
+      "EventRevision": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "created",
+              "updated"
+            ],
+            "title": "Action"
+          },
+          "window_start": {
+            "type": "string",
+            "title": "Window Start"
+          },
+          "window_end": {
+            "type": "string",
+            "title": "Window End"
+          },
+          "message_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Message Ids"
+          },
+          "snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EventSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision_no": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision No"
+          },
+          "recorded_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recorded At"
+          },
+          "change_kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "created",
+                  "progress",
+                  "confirmation",
+                  "correction",
+                  "evidence_only"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Kind"
+          },
+          "change_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Summary"
+          },
+          "summary_changed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary Changed"
+          },
+          "changed_fields": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Changed Fields"
+          },
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/EventChange"
+            },
+            "type": "array",
+            "title": "Changes"
+          },
+          "policy_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "action",
+          "window_start",
+          "window_end",
+          "message_ids",
+          "snapshot",
+          "revision_no",
+          "recorded_at",
+          "change_kind",
+          "change_summary",
+          "summary_changed",
+          "changed_fields",
+          "changes",
+          "policy_version"
+        ],
+        "title": "EventRevision",
+        "description": "记录哪一次处理、哪些消息创建或更新了事件。"
+      },
+      "EventSnapshot": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "uid": {
+            "type": "string",
+            "title": "Uid"
+          },
+          "stream": {
+            "type": "string",
+            "title": "Stream"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "topic_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic Key"
+          },
+          "start_time": {
+            "type": "string",
+            "title": "Start Time"
+          },
+          "end_time": {
+            "type": "string",
+            "title": "End Time"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "severity": {
+            "type": "string",
+            "title": "Severity"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "created_on": {
+            "type": "string",
+            "title": "Created On"
+          },
+          "assignees": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Assignees"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceResponse"
+            },
+            "type": "array",
+            "title": "Evidence"
+          },
+          "attributes": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Attributes"
+          },
+          "extensions": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Extensions"
+          },
+          "review_flag": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Flag"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "recovery": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecoveryConfirmation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recurrence_of": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecurrenceLink"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schema_version": {
+            "type": "integer",
+            "title": "Schema Version",
+            "default": 1
+          }
+        },
+        "type": "object",
+        "required": [
+          "event_id",
+          "uid",
+          "stream",
+          "type",
+          "topic_key",
+          "start_time",
+          "end_time",
+          "status",
+          "severity",
+          "summary",
+          "created_on",
+          "assignees",
+          "evidence",
+          "attributes",
+          "extensions",
+          "review_flag",
+          "closed_at",
+          "recovery",
+          "recurrence_of",
+          "schema_version"
+        ],
+        "title": "EventSnapshot",
+        "description": "一个事件版本的完整业务字段，不递归嵌入所有修订历史。"
+      },
+      "EvidenceResponse": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "message_id": {
+            "type": "string",
+            "title": "Message Id"
+          },
+          "send_time": {
+            "type": "string",
+            "title": "Send Time"
+          },
+          "excerpt": {
+            "type": "string",
+            "title": "Excerpt"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Digest"
+          },
+          "platform": {
+            "type": "string",
+            "title": "Platform",
+            "default": ""
+          },
+          "platform_label": {
+            "type": "string",
+            "title": "Platform Label",
+            "default": ""
+          },
+          "conversation_id": {
+            "type": "string",
+            "title": "Conversation Id",
+            "default": ""
+          },
+          "conversation_name": {
+            "type": "string",
+            "title": "Conversation Name",
+            "default": ""
+          },
+          "sender_name": {
+            "type": "string",
+            "title": "Sender Name",
+            "default": ""
+          },
+          "internal_hint": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Internal Hint"
+          },
+          "sender_role": {
+            "type": "string",
+            "enum": [
+              "internal",
+              "support",
+              "customer",
+              "external",
+              "unknown"
+            ],
+            "title": "Sender Role",
+            "default": "unknown"
+          },
+          "sender_kind": {
+            "type": "string",
+            "enum": [
+              "human",
+              "bot",
+              "unknown"
+            ],
+            "title": "Sender Kind",
+            "default": "unknown"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "message_id",
+          "send_time",
+          "excerpt",
+          "content",
+          "digest",
+          "platform",
+          "platform_label",
+          "conversation_id",
+          "conversation_name",
+          "sender_name",
+          "internal_hint",
+          "sender_role",
+          "sender_kind"
+        ],
+        "title": "EvidenceResponse",
+        "description": "可回到本地消息存储核验的证据，接口不提供完整原始响应。"
+      },
+      "ExecutionCandidate": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "hit_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Hit Reasons"
+          },
+          "selected_for_request": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected For Request"
+          }
+        },
+        "type": "object",
+        "required": [
+          "event_id",
+          "summary",
+          "status",
+          "hit_reasons",
+          "selected_for_request"
+        ],
+        "title": "ExecutionCandidate",
+        "description": "实际检索候选；被纳入请求也不表示程序决定更新它。"
+      },
+      "ExecutionContext": {
+        "properties": {
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Id"
+          },
+          "digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Digest"
+          },
+          "conversation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "send_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Send Time"
+          },
+          "quote": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quote"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          },
+          "availability": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Availability"
+          },
+          "truncated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Truncated"
+          },
+          "fragments": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutionFragment"
+            },
+            "type": "array",
+            "title": "Fragments"
+          },
+          "links": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutionContextLink"
+            },
+            "type": "array",
+            "title": "Links"
+          },
+          "selected_for_request": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected For Request"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "message_id",
+          "digest",
+          "conversation_id",
+          "send_time",
+          "quote",
+          "role",
+          "availability",
+          "truncated",
+          "fragments",
+          "links",
+          "selected_for_request"
+        ],
+        "title": "ExecutionContext"
+      },
+      "ExecutionContextLink": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          }
+        },
+        "type": "object",
+        "required": [
+          "event_id",
+          "kind"
+        ],
+        "title": "ExecutionContextLink"
+      },
+      "ExecutionDecision": {
+        "properties": {
+          "proposal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposal Id"
+          },
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
+          "possible_event_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Possible Event Ids"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "contributed_to_revision": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contributed To Revision"
+          },
+          "change_scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Scope"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "after": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "added_evidence": {
+            "items": {
+              "$ref": "#/components/schemas/RecordedMessageRef"
+            },
+            "type": "array",
+            "title": "Added Evidence"
+          }
+        },
+        "type": "object",
+        "required": [
+          "proposal_id",
+          "action",
+          "event_id",
+          "possible_event_ids",
+          "reason",
+          "contributed_to_revision",
+          "change_scope",
+          "before",
+          "after",
+          "added_evidence"
+        ],
+        "title": "ExecutionDecision"
+      },
+      "ExecutionDelivery": {
+        "properties": {
+          "destination": {
+            "type": "string",
+            "title": "Destination"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "observed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "destination",
+          "status",
+          "observed_at"
+        ],
+        "title": "ExecutionDelivery"
+      },
+      "ExecutionFragment": {
+        "properties": {
+          "start": {
+            "type": "integer",
+            "title": "Start"
+          },
+          "end": {
+            "type": "integer",
+            "title": "End"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "start",
+          "end",
+          "text"
+        ],
+        "title": "ExecutionFragment",
+        "description": "保存当时的必要片段及原文偏移，不拼造省略的内容。"
+      },
+      "ExecutionInput": {
+        "properties": {
+          "origin": {
+            "type": "string",
+            "title": "Origin"
+          },
+          "call_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Call No"
+          },
+          "new_messages": {
+            "items": {
+              "$ref": "#/components/schemas/RecordedMessageRef"
+            },
+            "type": "array",
+            "title": "New Messages"
+          },
+          "auxiliary_messages": {
+            "items": {
+              "$ref": "#/components/schemas/RecordedMessageRef"
+            },
+            "type": "array",
+            "title": "Auxiliary Messages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "origin",
+          "call_no",
+          "new_messages",
+          "auxiliary_messages"
+        ],
+        "title": "ExecutionInput",
+        "description": "消息清单或实际请求输入；角色与版本明确，未保存的正文为空。"
+      },
+      "ExecutionStage": {
+        "properties": {
+          "stage": {
+            "type": "string",
+            "title": "Stage"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "recorded_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recorded At"
+          },
+          "call_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Call No"
+          },
+          "error_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stage",
+          "status",
+          "recorded_at",
+          "call_no",
+          "error_type"
+        ],
+        "title": "ExecutionStage",
+        "description": "实际保存的阶段状态与观察时间，不是模型思维过程或精确提交时刻。"
+      },
+      "ExecutionState": {
+        "properties": {
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "event_id",
+          "summary",
+          "status"
+        ],
+        "title": "ExecutionState",
+        "description": "程序拟变化的已记录值，不能替代事务收据和持久修订。"
+      },
+      "ExecutionSuggestion": {
+        "properties": {
+          "proposal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposal Id"
+          },
+          "call_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Call No"
+          },
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
+          "possible_event_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Possible Event Ids"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "facts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Facts"
+          },
+          "basis": {
+            "items": {
+              "$ref": "#/components/schemas/RecordedMessageRef"
+            },
+            "type": "array",
+            "title": "Basis"
+          }
+        },
+        "type": "object",
+        "required": [
+          "proposal_id",
+          "call_no",
+          "action",
+          "event_id",
+          "possible_event_ids",
+          "summary",
+          "status",
+          "reason",
+          "facts",
+          "basis"
+        ],
+        "title": "ExecutionSuggestion",
+        "description": "已保存的结构化模型建议，尚不表示被程序采纳或已提交。"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "ok",
+            "title": "Status",
+            "default": "ok"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "HealthResponse",
+        "description": "本地服务健康状态，不携带运行凭据。"
+      },
+      "JsonValue": {},
+      "NormalizedRunRequest": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "const": "official",
+            "title": "Mode"
+          },
+          "uid": {
+            "type": "string",
+            "title": "Uid"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start"
+          },
+          "end": {
+            "type": "string",
+            "title": "End"
+          },
+          "interval": {
+            "type": "string",
+            "title": "Interval"
+          },
+          "offline": {
+            "type": "boolean",
+            "title": "Offline"
+          },
+          "context_lookback": {
+            "type": "string",
+            "title": "Context Lookback"
+          },
+          "match_window": {
+            "type": "string",
+            "title": "Match Window"
+          },
+          "closed_grace": {
+            "type": "string",
+            "title": "Closed Grace"
+          },
+          "ingest_lookback": {
+            "type": "string",
+            "title": "Ingest Lookback"
+          },
+          "default_status": {
+            "type": "string",
+            "title": "Default Status"
+          },
+          "default_severity": {
+            "type": "string",
+            "title": "Default Severity"
+          },
+          "closed_statuses": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Closed Statuses"
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "stub",
+              "xhub"
+            ],
+            "title": "Provider",
+            "default": "stub"
+          },
+          "llm_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Model"
+          },
+          "llm_max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Max Tokens"
+          },
+          "llm_timeout_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Timeout Seconds"
+          },
+          "analysis_stream": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Stream"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mode",
+          "uid",
+          "start",
+          "end",
+          "interval",
+          "offline",
+          "context_lookback",
+          "match_window",
+          "closed_grace",
+          "ingest_lookback",
+          "default_status",
+          "default_severity",
+          "closed_statuses",
+          "provider",
+          "llm_model",
+          "llm_max_tokens",
+          "llm_timeout_seconds",
+          "analysis_stream"
+        ],
+        "title": "NormalizedRunRequest",
+        "description": "已校验并冻结的请求，范围变化不会受之后修改 .env 的影响。"
+      },
+      "RecordedAttribution": {
+        "properties": {
+          "requested_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested Action"
+          },
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
+          "possible_event_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Possible Event Ids"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "revision_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision No"
+          },
+          "summary_changed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary Changed"
+          },
+          "change_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Kind"
+          },
+          "basis": {
+            "items": {
+              "$ref": "#/components/schemas/RecordedMessageRef"
+            },
+            "type": "array",
+            "title": "Basis"
+          },
+          "new_evidence": {
+            "items": {
+              "$ref": "#/components/schemas/RecordedMessageRef"
+            },
+            "type": "array",
+            "title": "New Evidence"
+          }
+        },
+        "type": "object",
+        "required": [
+          "requested_action",
+          "action",
+          "event_id",
+          "possible_event_ids",
+          "reason",
+          "revision_no",
+          "summary_changed",
+          "change_kind",
+          "basis",
+          "new_evidence"
+        ],
+        "title": "RecordedAttribution",
+        "description": "模型建议动作与程序最终动作分开；不是模型完整输出或内部思维。"
+      },
+      "RecordedMessageRef": {
+        "properties": {
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Id"
+          },
+          "digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Digest"
+          },
+          "conversation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "send_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Send Time"
+          },
+          "quote": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quote"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "message_id",
+          "digest",
+          "conversation_id",
+          "send_time",
+          "quote",
+          "role"
+        ],
+        "title": "RecordedMessageRef",
+        "description": "当时归属记录的定位与引文，缺失字段保持空值。"
+      },
+      "RecoveryConfirmation": {
+        "properties": {
+          "confirmed_at": {
+            "type": "string",
+            "title": "Confirmed At"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/CustomerRecoveryEvidence"
+            },
+            "type": "array",
+            "title": "Evidence"
+          },
+          "identity_basis": {
+            "type": "string",
+            "const": "confirmed_account",
+            "title": "Identity Basis"
+          },
+          "policy_version": {
+            "type": "string",
+            "title": "Policy Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "confirmed_at",
+          "evidence",
+          "identity_basis",
+          "policy_version"
+        ],
+        "title": "RecoveryConfirmation",
+        "description": "确认消息的时间与证据；不推测故障实际恢复的精确时刻。"
+      },
+      "RecurrenceLink": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "recovery": {
+            "$ref": "#/components/schemas/RecoveryConfirmation"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/ContinuityEvidence"
+            },
+            "type": "array",
+            "title": "Evidence"
+          },
+          "policy_version": {
+            "type": "string",
+            "title": "Policy Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "event_id",
+          "reason",
+          "recovery",
+          "evidence",
+          "policy_version"
+        ],
+        "title": "RecurrenceLink",
+        "description": "新事件指向前次事件，保留建立关联时的恢复依据。"
+      },
+      "ReviewResponse": {
+        "properties": {
+          "review_flag": {
+            "type": "string",
+            "title": "Review Flag"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "message_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Message Ids"
+          },
+          "possible_event_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Possible Event Ids"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "review_flag",
+          "type",
+          "message_ids",
+          "possible_event_ids",
+          "reason"
+        ],
+        "title": "ReviewResponse",
+        "description": "指代或身份不确定时保留复核项，不自动拆分或合并事件。"
+      },
+      "RunListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RunResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "RunListResponse",
+        "description": "按创建时间倒序提供任务，刷新页面后仍能看到进度。"
+      },
+      "RunRequest": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "const": "official",
+            "title": "Mode",
+            "default": "official"
+          },
+          "uid": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uid"
+          },
+          "start": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start"
+          },
+          "end": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End"
+          },
+          "interval": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 16,
+                "minLength": 2
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interval"
+          },
+          "offline": {
+            "type": "boolean",
+            "title": "Offline",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "RunRequest",
+        "description": "提交有限时间范围的回放，官方输入默认只读本地缓存。"
+      },
+      "RunResponse": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "uid": {
+            "type": "string",
+            "title": "Uid"
+          },
+          "mode": {
+            "type": "string",
+            "const": "official",
+            "title": "Mode"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed"
+            ],
+            "title": "Status"
+          },
+          "request": {
+            "$ref": "#/components/schemas/NormalizedRunRequest"
+          },
+          "total_windows": {
+            "type": "integer",
+            "title": "Total Windows"
+          },
+          "completed_windows": {
+            "type": "integer",
+            "title": "Completed Windows"
+          },
+          "current_window": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TimeWindow"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "cycles": {
+            "items": {
+              "$ref": "#/components/schemas/CycleResponse"
+            },
+            "type": "array",
+            "title": "Cycles"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_id",
+          "uid",
+          "mode",
+          "status",
+          "request",
+          "total_windows",
+          "completed_windows",
+          "current_window",
+          "created_at",
+          "started_at",
+          "finished_at",
+          "error",
+          "cycles"
+        ],
+        "title": "RunResponse",
+        "description": "持久化任务状态；列表省略 cycles 内容，详情提供完整周期结果。"
+      },
+      "ScopedChangeTask": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed"
+            ],
+            "title": "Status"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "total_windows": {
+            "type": "integer",
+            "title": "Total Windows"
+          },
+          "completed_windows": {
+            "type": "integer",
+            "title": "Completed Windows"
+          },
+          "current_window": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TimeWindow"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "current_scope_confirmed": {
+            "type": "boolean",
+            "title": "Current Scope Confirmed"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "recovered_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recovered By"
+          },
+          "recovery_link_unavailable": {
+            "type": "boolean",
+            "title": "Recovery Link Unavailable"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_id",
+          "status",
+          "created_at",
+          "total_windows",
+          "completed_windows",
+          "current_window",
+          "current_scope_confirmed",
+          "error",
+          "recovered_by",
+          "recovery_link_unavailable"
+        ],
+        "title": "ScopedChangeTask",
+        "description": "范围内任务不等于本事件的处理批次；失败状态不能证明事务回滚。"
+      },
+      "TimeWindow": {
+        "properties": {
+          "start": {
+            "type": "string",
+            "title": "Start"
+          },
+          "end": {
+            "type": "string",
+            "title": "End"
+          }
+        },
+        "type": "object",
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "TimeWindow",
+        "description": "业务窗口统一使用上海时区的左闭右开时间戳。"
+      },
+      "WatermarkResponse": {
+        "properties": {
+          "next_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Start"
+          },
+          "last_send_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Send Time"
+          },
+          "last_message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Message Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "next_start",
+          "last_send_time",
+          "last_message_id"
+        ],
+        "title": "WatermarkResponse",
+        "description": "辅助水位提示；已处理与否仍以数据库内的消息摘要为准。"
+      }
+    }
+  }
+}

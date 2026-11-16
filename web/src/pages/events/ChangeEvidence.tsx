@@ -1,0 +1,218 @@
+import { formatTime } from '@/lib/utils';
+import { evidenceKey, revisionEvidence } from './revisionEvidence';
+
+/** 每条引文只展示保存当时的来源和版本，不拿现有聊天替换。 */
+export function Proof({
+  item,
+  showRole = false,
+}: {
+  item: API.RecordedMessageRef;
+  showRole?: boolean;
+}) {
+  return (
+    <blockquote className="change-proof">
+      {showRole ? (
+        <small>
+          {item.role === 'new'
+            ? '本轮消息引用'
+            : item.role === 'history'
+              ? '历史背景引用'
+              : item.role === 'auxiliary'
+                ? '辅助背景引用'
+                : '输入身份未记录'}
+        </small>
+      ) : null}
+      <p>{item.quote ?? '引文未记录'}</p>
+      <small>
+        {item.send_time ? formatTime(item.send_time) : '时间未记录'} · 群{' '}
+        {item.conversation_id || '未记录'}
+      </small>
+      <small>
+        来源 {item.source || '未记录'} · 消息 {item.message_id || '未记录'}
+      </small>
+      <details>
+        <summary>消息版本</summary>
+        <code>{item.digest || '未记录'}</code>
+      </details>
+    </blockquote>
+  );
+}
+
+export function Proofs({
+  items,
+  showRole = false,
+}: {
+  items: API.RecordedMessageRef[];
+  showRole?: boolean;
+}) {
+  const unique = [
+    ...new Map(items.map((item) => [JSON.stringify(item), item])).entries(),
+  ];
+  return (
+    <>
+      {unique.map(([key, item]) => (
+        <Proof key={key} item={item} showRole={showRole} />
+      ))}
+    </>
+  );
+}
+
+/** 已保存快照的可核对差异；缺前版时明确未知，不借当前状态补全。 */
+export function VersionDifference({
+  revision,
+  previous,
+}: {
+  revision: API.EventRevision;
+  previous?: API.EventSnapshot | null;
+}) {
+  const after = revision.snapshot;
+  const facts = revisionEvidence(revision, previous, []);
+  const initial = revision.action === 'created';
+  const refs = revision.changes.flatMap((change) => change.evidence);
+  const beforeLabel = initial ? '首次创建，无前版' : '未记录';
+  return (
+    <div className="change-version">
+      <p>
+        记录时间：
+        {revision.recorded_at ? formatTime(revision.recorded_at) : '未记录'} ·
+        提交时间：未记录
+      </p>
+      <dl className="change-diff">
+        <dt>原摘要</dt>
+        <dd>{previous?.summary ?? beforeLabel}</dd>
+        <dt>本版摘要</dt>
+        <dd>{after?.summary ?? '未记录'}</dd>
+        <dt>状态</dt>
+        <dd>
+          {previous?.status ?? beforeLabel} → {after?.status ?? '未记录'}
+        </dd>
+      </dl>
+      {revision.summary_changed === false ? <p>摘要未变化</p> : null}
+      <p>
+        {facts.complete
+          ? `新增 ${facts.added} 条消息证据，更新 ${facts.revised} 条已有消息的证据版本`
+          : '证据差异记录不完整，不能确定全部新增或版本变化'}
+      </p>
+      {facts.entries.map((item) => {
+        const priorVersions = (previous?.evidence || []).filter(
+          (old) =>
+            old.source === item.source &&
+            old.message_id === item.message_id &&
+            old.digest !== item.digest,
+        );
+        const ref = refs.find(
+          (r) =>
+            r.source === item.source &&
+            r.message_id === item.message_id &&
+            r.digest === item.digest,
+        );
+        return (
+          <div key={evidenceKey(item)}>
+            {priorVersions.length ? (
+              <details>
+                <summary>此前保存的证据版本</summary>
+                <Proofs
+                  items={priorVersions.map((old) => ({
+                    source: old.source,
+                    message_id: old.message_id,
+                    digest: old.digest,
+                    conversation_id: old.conversation_id,
+                    send_time: old.send_time,
+                    quote: old.excerpt,
+                    role: 'history',
+                  }))}
+                />
+              </details>
+            ) : null}
+            <p>本版新增的证据{priorVersions.length ? '版本' : ''}</p>
+            <Proof
+              item={{
+                source: item.source,
+                message_id: item.message_id,
+                digest: item.digest,
+                conversation_id: ref?.conversation_id || item.conversation_id,
+                send_time: item.send_time,
+                quote: item.excerpt,
+                role: 'new',
+              }}
+            />
+          </div>
+        );
+      })}
+      <details>
+        <summary>该版记录的变化依据</summary>
+        {revision.changes.length ? (
+          revision.changes.map((change) => (
+            <div key={JSON.stringify(change)}>
+              <p>
+                {change.text}
+                {change.effect === 'evidence_only' ? '（仅补证据）' : ''}
+              </p>
+              {change.replaces ? <p>替换原片段：{change.replaces}</p> : null}
+              <Proofs
+                items={change.evidence.map((ref) => ({ ...ref, role: 'new' }))}
+              />
+            </div>
+          ))
+        ) : (
+          <p>未记录</p>
+        )}
+        <p>单个状态字段与引文的精确对应未单独记录；以上为本版保存的依据。</p>
+      </details>
+      <details>
+        <summary>客户恢复与复发关系</summary>
+        <p>
+          恢复确认：
+          {previous
+            ? previous.recovery
+              ? '客户已确认'
+              : '无确认记录'
+            : beforeLabel}{' '}
+          → {after ? (after.recovery ? '客户已确认' : '无确认记录') : '未记录'}
+        </p>
+        {previous?.recovery &&
+        JSON.stringify(previous.recovery) !==
+          JSON.stringify(after?.recovery) ? (
+          <>
+            <p>原确认依据</p>
+            <Proofs
+              items={previous.recovery.evidence.map((ref) => ({
+                ...ref,
+                role: 'history',
+              }))}
+            />
+          </>
+        ) : null}
+        {after?.recovery ? (
+          <>
+            <p>本版确认依据</p>
+            <Proofs
+              items={after.recovery.evidence.map((ref) => ({
+                ...ref,
+                role: 'new',
+              }))}
+            />
+          </>
+        ) : null}
+        <p>
+          前次事件：
+          {previous
+            ? previous.recurrence_of?.event_id || '无关联记录'
+            : beforeLabel}{' '}
+          → {after ? after.recurrence_of?.event_id || '无关联记录' : '未记录'}
+        </p>
+        {after?.recurrence_of ? (
+          <>
+            <p>{after.recurrence_of.reason}</p>
+            <Proofs
+              items={after.recurrence_of.evidence.map((ref) => ({
+                ...ref,
+                role: 'new',
+              }))}
+            />
+          </>
+        ) : null}
+      </details>
+    </div>
+  );
+}

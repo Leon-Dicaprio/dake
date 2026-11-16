@@ -1,0 +1,800 @@
+declare namespace API {
+  type ChangeEvidence = {
+    /** Source */
+    source: string;
+    /** Message Id */
+    message_id: string;
+    /** Digest */
+    digest: string;
+    /** Conversation Id */
+    conversation_id: string;
+    /** Send Time */
+    send_time: string;
+    /** Quote */
+    quote: string;
+  };
+
+  type ConfigResponse = {
+    /** Uid */
+    uid: string;
+    /** Start */
+    start: string;
+    /** End */
+    end: string;
+    /** Interval */
+    interval: string;
+    /** Context Lookback */
+    context_lookback: string;
+    /** Match Window */
+    match_window: string;
+    /** Ingest Lookback */
+    ingest_lookback: string;
+    /** Closed Grace */
+    closed_grace: string;
+    /** Event Types */
+    event_types: string[];
+    /** Provider */
+    provider: "stub" | "xhub";
+    /** Customers */
+    customers: CustomerResponse[];
+  };
+
+  type ContinuityEvidence = {
+    /** Source */
+    source: string;
+    /** Message Id */
+    message_id: string;
+    /** Digest */
+    digest: string;
+    /** Conversation Id */
+    conversation_id: string;
+    /** Send Time */
+    send_time: string;
+    /** Quote */
+    quote: string;
+    /** Sender Id */
+    sender_id: string;
+  };
+
+  type ConversationRef = {
+    /** Id */
+    id: string;
+    /** Name */
+    name: string;
+    /** Platform */
+    platform: string;
+    /** Platform Label */
+    platform_label: string;
+  };
+
+  type CustomerRecoveryEvidence = {
+    /** Source */
+    source: string;
+    /** Message Id */
+    message_id: string;
+    /** Digest */
+    digest: string;
+    /** Conversation Id */
+    conversation_id: string;
+    /** Send Time */
+    send_time: string;
+    /** Quote */
+    quote: string;
+    /** Sender Id */
+    sender_id: string;
+    /** Sender Role */
+    sender_role: string;
+  };
+
+  type CustomerResponse = {
+    /** Uid */
+    uid: string;
+    /** Label */
+    label: string;
+    /** Message Count */
+    message_count: number;
+    /** Event Count */
+    event_count: number;
+    /** Stream */
+    stream: string;
+  };
+
+  type CycleResponse = {
+    /** Uid */
+    uid: string;
+    /** Stream */
+    stream: string;
+    window: TimeWindow;
+    /** Ingested */
+    ingested: number;
+    /** Processed */
+    processed: number;
+    /** Created */
+    created: string[];
+    /** Updated */
+    updated: string[];
+    /** Review */
+    review: ReviewResponse[];
+    /** Events */
+    events: EventResponse[];
+    watermark: WatermarkResponse;
+    /** Filter Audit */
+    filter_audit: Record<string, any>[];
+    /** Recovered From History */
+    recovered_from_history: boolean;
+    /** Counts Complete */
+    counts_complete: boolean;
+  };
+
+  type ErrorResponse = {
+    /** Detail */
+    detail: string;
+  };
+
+  type EventChange = {
+    /** Kind */
+    kind: "progress" | "confirmation" | "correction";
+    /** Effect */
+    effect: "progress" | "confirmation" | "correction" | "evidence_only";
+    /** Text */
+    text: string;
+    /** Replaces */
+    replaces: string | null;
+    /** Evidence */
+    evidence: ChangeEvidence[];
+  };
+
+  type EventChangeBatch = {
+    /** Run Id */
+    run_id: string;
+    /** Cycle Index */
+    cycle_index: number;
+    window: TimeWindow;
+    /** Processed */
+    processed: number | null;
+    /** Counts Complete */
+    counts_complete: boolean;
+    /** Recovered From History */
+    recovered_from_history: boolean;
+    /** Created */
+    created: boolean;
+    /** Updated */
+    updated: boolean;
+    /** Attributions */
+    attributions: RecordedAttribution[];
+    /** Revision Indexes */
+    revision_indexes: number[];
+  };
+
+  type EventChangesResponse = {
+    /** Uid */
+    uid: string;
+    /** Stream */
+    stream: string;
+    /** Event Id */
+    event_id: string;
+    /** Batches */
+    batches: EventChangeBatch[];
+    /** Tasks */
+    tasks: ScopedChangeTask[];
+    /** Revisions */
+    revisions: EventRevision[];
+    /** Total Runs */
+    total_runs: number;
+    /** Offset */
+    offset: number;
+    /** Next Offset */
+    next_offset: number | null;
+    /** Executions */
+    executions: EventExecution[];
+    /** Execution Records Available */
+    execution_records_available: boolean;
+    /** Total Executions */
+    total_executions: number;
+    /** Execution Offset */
+    execution_offset: number;
+    /** Next Execution Offset */
+    next_execution_offset: number | null;
+  };
+
+  type EventExecution = {
+    /** Attempt Id */
+    attempt_id: string;
+    /** Run Id */
+    run_id: string | null;
+    /** Window Index */
+    window_index: number | null;
+    window: TimeWindow;
+    /** Outcome */
+    outcome: string;
+    /** Created At */
+    created_at: string | null;
+    /** Finished At */
+    finished_at: string | null;
+    /** Retry Of */
+    retry_of: string | null;
+    /** Retry Link Unavailable */
+    retry_link_unavailable: boolean;
+    /** Related By */
+    related_by: string[];
+    /** Error Type */
+    error_type: string | null;
+    /** Stages */
+    stages: ExecutionStage[];
+    /** Inputs */
+    inputs: ExecutionInput[];
+    /** Candidates */
+    candidates: ExecutionCandidate[];
+    /** Contexts */
+    contexts: ExecutionContext[];
+    /** Context Reasons */
+    context_reasons: string[];
+    /** Context Omitted */
+    context_omitted: number | null;
+    /** Suggestions */
+    suggestions: ExecutionSuggestion[];
+    /** Decisions */
+    decisions: ExecutionDecision[];
+    /** Commit Status */
+    commit_status: string;
+    /** Receipt Kind */
+    receipt_kind: string | null;
+    /** Receipt Prepared At */
+    receipt_prepared_at: string | null;
+    /** Processed */
+    processed: number | null;
+    /** Created */
+    created: boolean;
+    /** Updated */
+    updated: boolean;
+    /** Revision Indexes */
+    revision_indexes: number[];
+    /** Revision Link Unavailable */
+    revision_link_unavailable: boolean;
+    /** Delivery */
+    delivery: ExecutionDelivery[];
+  };
+
+  type EventListResponse = {
+    /** Items */
+    items: EventResponse[];
+    /** Total */
+    total: number;
+  };
+
+  type EventResponse = {
+    /** Event Id */
+    event_id: string;
+    /** Uid */
+    uid: string;
+    /** Stream */
+    stream: string;
+    /** Type */
+    type: string;
+    /** Topic Key */
+    topic_key: string | null;
+    /** Start Time */
+    start_time: string;
+    /** End Time */
+    end_time: string;
+    /** Status */
+    status: string;
+    /** Severity */
+    severity: string;
+    /** Summary */
+    summary: string;
+    /** Created On */
+    created_on: string;
+    /** Assignees */
+    assignees: string[];
+    /** Evidence */
+    evidence: EvidenceResponse[];
+    /** Attributes */
+    attributes: Record<string, any>;
+    /** Extensions */
+    extensions: Record<string, any>;
+    /** Review Flag */
+    review_flag: string | null;
+    /** Closed At */
+    closed_at: string | null;
+    recovery: RecoveryConfirmation | null;
+    recurrence_of: RecurrenceLink | null;
+    /** Schema Version */
+    schema_version: number;
+    /** Updated By */
+    updated_by: EventRevision[];
+    /** Conversations */
+    conversations: ConversationRef[];
+    /** Platforms */
+    platforms: string[];
+  };
+
+  type EventRevision = {
+    /** Action */
+    action: "created" | "updated";
+    /** Window Start */
+    window_start: string;
+    /** Window End */
+    window_end: string;
+    /** Message Ids */
+    message_ids: string[];
+    snapshot: EventSnapshot | null;
+    /** Revision No */
+    revision_no: number | null;
+    /** Recorded At */
+    recorded_at: string | null;
+    /** Change Kind */
+    change_kind:
+      | "created"
+      | "progress"
+      | "confirmation"
+      | "correction"
+      | "evidence_only"
+      | null;
+    /** Change Summary */
+    change_summary: string | null;
+    /** Summary Changed */
+    summary_changed: boolean | null;
+    /** Changed Fields */
+    changed_fields: string[];
+    /** Changes */
+    changes: EventChange[];
+    /** Policy Version */
+    policy_version: string | null;
+  };
+
+  type EventSnapshot = {
+    /** Event Id */
+    event_id: string;
+    /** Uid */
+    uid: string;
+    /** Stream */
+    stream: string;
+    /** Type */
+    type: string;
+    /** Topic Key */
+    topic_key: string | null;
+    /** Start Time */
+    start_time: string;
+    /** End Time */
+    end_time: string;
+    /** Status */
+    status: string;
+    /** Severity */
+    severity: string;
+    /** Summary */
+    summary: string;
+    /** Created On */
+    created_on: string;
+    /** Assignees */
+    assignees: string[];
+    /** Evidence */
+    evidence: EvidenceResponse[];
+    /** Attributes */
+    attributes: Record<string, any>;
+    /** Extensions */
+    extensions: Record<string, any>;
+    /** Review Flag */
+    review_flag: string | null;
+    /** Closed At */
+    closed_at: string | null;
+    recovery: RecoveryConfirmation | null;
+    recurrence_of: RecurrenceLink | null;
+    /** Schema Version */
+    schema_version: number;
+  };
+
+  type EvidenceResponse = {
+    /** Source */
+    source: string;
+    /** Message Id */
+    message_id: string;
+    /** Send Time */
+    send_time: string;
+    /** Excerpt */
+    excerpt: string;
+    /** Content */
+    content: string | null;
+    /** Digest */
+    digest: string | null;
+    /** Platform */
+    platform: string;
+    /** Platform Label */
+    platform_label: string;
+    /** Conversation Id */
+    conversation_id: string;
+    /** Conversation Name */
+    conversation_name: string;
+    /** Sender Name */
+    sender_name: string;
+    /** Internal Hint */
+    internal_hint: number | null;
+    /** Sender Role */
+    sender_role: "internal" | "support" | "customer" | "external" | "unknown";
+    /** Sender Kind */
+    sender_kind: "human" | "bot" | "unknown";
+  };
+
+  type ExecutionCandidate = {
+    /** Event Id */
+    event_id: string;
+    /** Summary */
+    summary: string | null;
+    /** Status */
+    status: string | null;
+    /** Hit Reasons */
+    hit_reasons: string[];
+    /** Selected For Request */
+    selected_for_request: boolean | null;
+  };
+
+  type ExecutionContext = {
+    /** Source */
+    source: string | null;
+    /** Message Id */
+    message_id: string | null;
+    /** Digest */
+    digest: string | null;
+    /** Conversation Id */
+    conversation_id: string | null;
+    /** Send Time */
+    send_time: string | null;
+    /** Quote */
+    quote: string | null;
+    /** Role */
+    role: string | null;
+    /** Availability */
+    availability: string | null;
+    /** Truncated */
+    truncated: boolean | null;
+    /** Fragments */
+    fragments: ExecutionFragment[];
+    /** Links */
+    links: ExecutionContextLink[];
+    /** Selected For Request */
+    selected_for_request: boolean | null;
+  };
+
+  type ExecutionContextLink = {
+    /** Event Id */
+    event_id: string;
+    /** Kind */
+    kind: string;
+  };
+
+  type ExecutionDecision = {
+    /** Proposal Id */
+    proposal_id: string | null;
+    /** Action */
+    action: string | null;
+    /** Event Id */
+    event_id: string | null;
+    /** Possible Event Ids */
+    possible_event_ids: string[];
+    /** Reason */
+    reason: string | null;
+    /** Contributed To Revision */
+    contributed_to_revision: boolean | null;
+    /** Change Scope */
+    change_scope: string | null;
+    before: ExecutionState | null;
+    after: ExecutionState | null;
+    /** Added Evidence */
+    added_evidence: RecordedMessageRef[];
+  };
+
+  type ExecutionDelivery = {
+    /** Destination */
+    destination: string;
+    /** Status */
+    status: string;
+    /** Observed At */
+    observed_at: string | null;
+  };
+
+  type ExecutionFragment = {
+    /** Start */
+    start: number;
+    /** End */
+    end: number;
+    /** Text */
+    text: string;
+  };
+
+  type ExecutionInput = {
+    /** Origin */
+    origin: string;
+    /** Call No */
+    call_no: number | null;
+    /** New Messages */
+    new_messages: RecordedMessageRef[];
+    /** Auxiliary Messages */
+    auxiliary_messages: RecordedMessageRef[];
+  };
+
+  type ExecutionStage = {
+    /** Stage */
+    stage: string;
+    /** Status */
+    status: string;
+    /** Recorded At */
+    recorded_at: string | null;
+    /** Call No */
+    call_no: number | null;
+    /** Error Type */
+    error_type: string | null;
+  };
+
+  type ExecutionState = {
+    /** Event Id */
+    event_id: string | null;
+    /** Summary */
+    summary: string | null;
+    /** Status */
+    status: string | null;
+  };
+
+  type ExecutionSuggestion = {
+    /** Proposal Id */
+    proposal_id: string | null;
+    /** Call No */
+    call_no: number | null;
+    /** Action */
+    action: string | null;
+    /** Event Id */
+    event_id: string | null;
+    /** Possible Event Ids */
+    possible_event_ids: string[];
+    /** Summary */
+    summary: string | null;
+    /** Status */
+    status: string | null;
+    /** Reason */
+    reason: string | null;
+    /** Facts */
+    facts: string[];
+    /** Basis */
+    basis: RecordedMessageRef[];
+  };
+
+  type getEventChangesParams = {
+    event_id: string;
+    uid: string;
+    stream: string;
+    offset?: number;
+    execution_offset?: number;
+  };
+
+  type getEventParams = {
+    event_id: string;
+    uid?: string | null;
+    stream?: string | null;
+  };
+
+  type getRunParams = {
+    run_id: string;
+    uid?: string | null;
+    stream?: string | null;
+  };
+
+  type HealthResponse = {
+    /** Status */
+    status: string;
+  };
+
+  type JsonValue = Record<string, any>;
+
+  type listEventsParams = {
+    uid?: string | null;
+    stream?: string | null;
+    type?: string | null;
+  };
+
+  type listRunsParams = {
+    uid?: string | null;
+    mode?: string | null;
+    stream?: string | null;
+  };
+
+  type NormalizedRunRequest = {
+    /** Mode */
+    mode: string;
+    /** Uid */
+    uid: string;
+    /** Start */
+    start: string;
+    /** End */
+    end: string;
+    /** Interval */
+    interval: string;
+    /** Offline */
+    offline: boolean;
+    /** Context Lookback */
+    context_lookback: string;
+    /** Match Window */
+    match_window: string;
+    /** Closed Grace */
+    closed_grace: string;
+    /** Ingest Lookback */
+    ingest_lookback: string;
+    /** Default Status */
+    default_status: string;
+    /** Default Severity */
+    default_severity: string;
+    /** Closed Statuses */
+    closed_statuses: string[];
+    /** Provider */
+    provider: "stub" | "xhub";
+    /** Llm Model */
+    llm_model: string | null;
+    /** Llm Max Tokens */
+    llm_max_tokens: number | null;
+    /** Llm Timeout Seconds */
+    llm_timeout_seconds: number | null;
+    /** Analysis Stream */
+    analysis_stream: string | null;
+  };
+
+  type RecordedAttribution = {
+    /** Requested Action */
+    requested_action: string | null;
+    /** Action */
+    action: string | null;
+    /** Event Id */
+    event_id: string | null;
+    /** Possible Event Ids */
+    possible_event_ids: string[];
+    /** Reason */
+    reason: string | null;
+    /** Revision No */
+    revision_no: number | null;
+    /** Summary Changed */
+    summary_changed: boolean | null;
+    /** Change Kind */
+    change_kind: string | null;
+    /** Basis */
+    basis: RecordedMessageRef[];
+    /** New Evidence */
+    new_evidence: RecordedMessageRef[];
+  };
+
+  type RecordedMessageRef = {
+    /** Source */
+    source: string | null;
+    /** Message Id */
+    message_id: string | null;
+    /** Digest */
+    digest: string | null;
+    /** Conversation Id */
+    conversation_id: string | null;
+    /** Send Time */
+    send_time: string | null;
+    /** Quote */
+    quote: string | null;
+    /** Role */
+    role: string | null;
+  };
+
+  type RecoveryConfirmation = {
+    /** Confirmed At */
+    confirmed_at: string;
+    /** Evidence */
+    evidence: CustomerRecoveryEvidence[];
+    /** Identity Basis */
+    identity_basis: string;
+    /** Policy Version */
+    policy_version: string;
+  };
+
+  type RecurrenceLink = {
+    /** Event Id */
+    event_id: string;
+    /** Reason */
+    reason: string;
+    recovery: RecoveryConfirmation;
+    /** Evidence */
+    evidence: ContinuityEvidence[];
+    /** Policy Version */
+    policy_version: string;
+  };
+
+  type ReviewResponse = {
+    /** Review Flag */
+    review_flag: string;
+    /** Type */
+    type: string;
+    /** Message Ids */
+    message_ids: string[];
+    /** Possible Event Ids */
+    possible_event_ids: string[];
+    /** Reason */
+    reason: string;
+  };
+
+  type RunListResponse = {
+    /** Items */
+    items: RunResponse[];
+    /** Total */
+    total: number;
+  };
+
+  type RunRequest = {
+    /** Mode */
+    mode?: string;
+    /** Uid */
+    uid?: string | null;
+    /** Start */
+    start?: string | null;
+    /** End */
+    end?: string | null;
+    /** Interval */
+    interval?: string | null;
+    /** Offline */
+    offline?: boolean;
+  };
+
+  type RunResponse = {
+    /** Run Id */
+    run_id: string;
+    /** Uid */
+    uid: string;
+    /** Mode */
+    mode: string;
+    /** Status */
+    status: "queued" | "running" | "succeeded" | "failed";
+    request: NormalizedRunRequest;
+    /** Total Windows */
+    total_windows: number;
+    /** Completed Windows */
+    completed_windows: number;
+    current_window: TimeWindow | null;
+    /** Created At */
+    created_at: string;
+    /** Started At */
+    started_at: string | null;
+    /** Finished At */
+    finished_at: string | null;
+    /** Error */
+    error: string | null;
+    /** Cycles */
+    cycles: CycleResponse[];
+  };
+
+  type ScopedChangeTask = {
+    /** Run Id */
+    run_id: string;
+    /** Status */
+    status: "queued" | "running" | "succeeded" | "failed";
+    /** Created At */
+    created_at: string | null;
+    /** Total Windows */
+    total_windows: number;
+    /** Completed Windows */
+    completed_windows: number;
+    current_window: TimeWindow | null;
+    /** Current Scope Confirmed */
+    current_scope_confirmed: boolean;
+    /** Error */
+    error: string | null;
+    /** Recovered By */
+    recovered_by: string | null;
+    /** Recovery Link Unavailable */
+    recovery_link_unavailable: boolean;
+  };
+
+  type TimeWindow = {
+    /** Start */
+    start: string;
+    /** End */
+    end: string;
+  };
+
+  type WatermarkResponse = {
+    /** Next Start */
+    next_start: string | null;
+    /** Last Send Time */
+    last_send_time: string | null;
+    /** Last Message Id */
+    last_message_id: string | null;
+  };
+}

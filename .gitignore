@@ -1,0 +1,36 @@
+# 原始聊天与本地数据，禁止入库
+data/
+*.jsonl
+.env
+.env.*
+!.env.example
+
+# 本地输出
+outputs/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# 编辑器与系统
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# 前端依赖、框架生成文件和浏览器测试产物
+node_modules/
+.umi/
+.umi-production/
+.output/
+test-results/
+playwright-report/

@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dake-aftersales"
+version = "0.1.0"
+description = "Incremental customer aftersales event processing"
+requires-python = ">=3.11"
+dependencies = [
+    "PyMySQL[rsa]>=1.1,<2",
+    "python-dotenv>=1.0,<2",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30,<1",
+    "pydantic>=2,<3",
+    "httpx>=0.27,<1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10"]
+
+[project.scripts]
+dake = "dake.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+dake = ["analysis/prompts/*.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["mysql: requires the project local MySQL instance", "isolated_mysql: 仅由显式指定全新隔离库的专用验收入口启用"]
