@@ -1,5 +1,5 @@
 import { ListChecks } from 'lucide-react';
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useRef, useState } from 'react';
 import { EmptyState, ErrorNotice, LoadingRows } from '@/components/Feedback';
 import { Button } from '@/components/ui/button';
 import {
@@ -186,6 +186,7 @@ export function ChangesContent({
   children?: ReactNode;
   onDetailsOpen?: () => void;
 }) {
+  const technicalRef = useRef<HTMLDetailsElement>(null);
   const recovered = new Map<string, API.EventExecution>();
   const pending = (data.executions || []).filter(
     (item) => item.outcome === 'running',
@@ -206,6 +207,21 @@ export function ChangesContent({
   );
   return (
     <>
+      <p className="change-muted">
+        先看消息带来的实际变化；排查归属与更新原因时，可查看输入、候选、判断和提交记录。
+      </p>
+      <button
+        type="button"
+        className="expandable-toggle"
+        onClick={() => {
+          if (technicalRef.current) {
+            technicalRef.current.open = true;
+            technicalRef.current.scrollIntoView({ block: 'start' });
+          }
+        }}
+      >
+        查看处理链路 · 输入 → 候选 → 判断 → 提交
+      </button>
       <SavedChanges data={data} />
       {pending.length ? (
         <section
@@ -263,6 +279,7 @@ export function ChangesContent({
         </p>
       ) : null}
       <details
+        ref={technicalRef}
         className="change-section change-technical"
         onToggle={(event) => {
           if (event.currentTarget.open) onDetailsOpen?.();

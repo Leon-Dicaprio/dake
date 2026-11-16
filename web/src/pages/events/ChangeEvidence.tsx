@@ -61,9 +61,13 @@ export function Proofs({
 export function VersionDifference({
   revision,
   previous,
+  showSummary = true,
+  showEvidence = true,
 }: {
   revision: API.EventRevision;
   previous?: API.EventSnapshot | null;
+  showSummary?: boolean;
+  showEvidence?: boolean;
 }) {
   const after = revision.snapshot;
   const facts = revisionEvidence(revision, previous, []);
@@ -78,13 +82,19 @@ export function VersionDifference({
         提交时间：未记录
       </p>
       <dl className="change-diff">
-        <dt>原摘要</dt>
-        <dd>{previous?.summary ?? beforeLabel}</dd>
-        <dt>本版摘要</dt>
-        <dd>{after?.summary ?? '未记录'}</dd>
+        {showSummary ? (
+          <>
+            <dt>原摘要</dt>
+            <dd>{previous?.summary ?? beforeLabel}</dd>
+            <dt>本版摘要</dt>
+            <dd>{after?.summary ?? '未记录'}</dd>
+          </>
+        ) : null}
         <dt>状态</dt>
         <dd>
-          {previous?.status ?? beforeLabel} → {after?.status ?? '未记录'}
+          {previous && after && previous.status === after.status
+            ? `${after.status}（未变化）`
+            : `${previous?.status ?? beforeLabel} → ${after?.status ?? '未记录'}`}
         </dd>
       </dl>
       {revision.summary_changed === false ? <p>摘要未变化</p> : null}
@@ -93,72 +103,84 @@ export function VersionDifference({
           ? `新增 ${facts.added} 条消息证据，更新 ${facts.revised} 条已有消息的证据版本`
           : '证据差异记录不完整，不能确定全部新增或版本变化'}
       </p>
-      {facts.entries.map((item) => {
-        const priorVersions = (previous?.evidence || []).filter(
-          (old) =>
-            old.source === item.source &&
-            old.message_id === item.message_id &&
-            old.digest !== item.digest,
-        );
-        const ref = refs.find(
-          (r) =>
-            r.source === item.source &&
-            r.message_id === item.message_id &&
-            r.digest === item.digest,
-        );
-        return (
-          <div key={evidenceKey(item)}>
-            {priorVersions.length ? (
-              <details>
-                <summary>此前保存的证据版本</summary>
-                <Proofs
-                  items={priorVersions.map((old) => ({
-                    source: old.source,
-                    message_id: old.message_id,
-                    digest: old.digest,
-                    conversation_id: old.conversation_id,
-                    send_time: old.send_time,
-                    quote: old.excerpt,
-                    role: 'history',
-                  }))}
+      {showEvidence ? (
+        <>
+          {facts.entries.map((item) => {
+            const priorVersions = (previous?.evidence || []).filter(
+              (old) =>
+                old.source === item.source &&
+                old.message_id === item.message_id &&
+                old.digest !== item.digest,
+            );
+            const ref = refs.find(
+              (r) =>
+                r.source === item.source &&
+                r.message_id === item.message_id &&
+                r.digest === item.digest,
+            );
+            return (
+              <div key={evidenceKey(item)}>
+                {priorVersions.length ? (
+                  <details>
+                    <summary>此前保存的证据版本</summary>
+                    <Proofs
+                      items={priorVersions.map((old) => ({
+                        source: old.source,
+                        message_id: old.message_id,
+                        digest: old.digest,
+                        conversation_id: old.conversation_id,
+                        send_time: old.send_time,
+                        quote: old.excerpt,
+                        role: 'history',
+                      }))}
+                    />
+                  </details>
+                ) : null}
+                <p>本版新增的证据{priorVersions.length ? '版本' : ''}</p>
+                <Proof
+                  item={{
+                    source: item.source,
+                    message_id: item.message_id,
+                    digest: item.digest,
+                    conversation_id:
+                      ref?.conversation_id || item.conversation_id,
+                    send_time: item.send_time,
+                    quote: item.excerpt,
+                    role: 'new',
+                  }}
                 />
-              </details>
-            ) : null}
-            <p>本版新增的证据{priorVersions.length ? '版本' : ''}</p>
-            <Proof
-              item={{
-                source: item.source,
-                message_id: item.message_id,
-                digest: item.digest,
-                conversation_id: ref?.conversation_id || item.conversation_id,
-                send_time: item.send_time,
-                quote: item.excerpt,
-                role: 'new',
-              }}
-            />
-          </div>
-        );
-      })}
-      <details>
-        <summary>该版记录的变化依据</summary>
-        {revision.changes.length ? (
-          revision.changes.map((change) => (
-            <div key={JSON.stringify(change)}>
-              <p>
-                {change.text}
-                {change.effect === 'evidence_only' ? '（仅补证据）' : ''}
-              </p>
-              {change.replaces ? <p>替换原片段：{change.replaces}</p> : null}
-              <Proofs
-                items={change.evidence.map((ref) => ({ ...ref, role: 'new' }))}
-              />
-            </div>
-          ))
-        ) : (
-          <p>未记录</p>
-        )}
-        <p>单个状态字段与引文的精确对应未单独记录；以上为本版保存的依据。</p>
-      </details>
+              </div>
+            );
+          })}
+          <details>
+            <summary>该版记录的变化依据</summary>
+            {revision.changes.length ? (
+              revision.changes.map((change) => (
+                <div key={JSON.stringify(change)}>
+                  <p>
+                    {change.text}
+                    {change.effect === 'evidence_only' ? '（仅补证据）' : ''}
+                  </p>
+                  {change.replaces ? (
+                    <p>替换原片段：{change.replaces}</p>
+                  ) : null}
+                  <Proofs
+                    items={change.evidence.map((ref) => ({
+                      ...ref,
+                      role: 'new',
+                    }))}
+                  />
+                </div>
+              ))
+            ) : (
+              <p>未记录</p>
+            )}
+            <p>
+              单个状态字段与引文的精确对应未单独记录；以上为本版保存的依据。
+            </p>
+          </details>
+        </>
+      ) : null}
       <details>
         <summary>客户恢复与复发关系</summary>
         <p>

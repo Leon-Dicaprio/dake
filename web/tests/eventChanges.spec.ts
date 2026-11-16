@@ -515,6 +515,7 @@ test.describe('独立合成服务交互', () => {
     await expect(page.locator('.inbox-aside .aside-updates')).toHaveCount(0);
     const saved = dialog.getByRole('region', { name: '已保存的事件变化' });
     await expect(saved).toBeVisible();
+    await saved.getByText('完整摘要对比', { exact: true }).first().click();
     await expect(saved.getByText('变化前摘要').first()).toBeVisible();
     await expect(saved.getByText('变化后摘要').first()).toBeVisible();
     await expect(dialog.locator('.change-technical')).not.toHaveAttribute(

@@ -52,12 +52,40 @@ test('真实后端：变化先加载、详情按需读取、完成后停止轮�
       (url) => new URL(url).searchParams.get('include_details') === 'false',
     ),
   ).toBe(true);
+  const cards = timeline.locator('.saved-change');
+  const order = await cards.evaluateAll((nodes) =>
+    nodes.map((node) => node.getAttribute('data-revision-index')),
+  );
+  await timeline
+    .getByRole('button', { name: '当前最新在前 · 从头查看流转' })
+    .click();
+  expect(
+    await cards.evaluateAll((nodes) =>
+      nodes.map((node) => node.getAttribute('data-revision-index')),
+    ),
+  ).toEqual([...order].reverse());
+  const firstCard = cards.first();
+  await expect(firstCard.locator('.change-proof').first()).not.toBeVisible();
+  await firstCard.getByText(/^触发消息 ·/).click();
+  await expect(firstCard.locator('.change-proof').first()).toBeVisible();
+  await expect(
+    firstCard.getByText('来源与消息版本', { exact: true }),
+  ).toHaveCount(0);
+  await expect(firstCard.locator('.change-diff').first()).not.toBeVisible();
+  await firstCard.getByText('完整摘要对比', { exact: true }).click();
+  await expect(firstCard.locator('.change-diff').first()).toBeVisible();
+  await firstCard
+    .getByText('核对记录 · 保存时间与消息标识', { exact: true })
+    .click();
+  await expect(firstCard.getByText('原摘要', { exact: true })).toHaveCount(0);
   const fullResponse = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname.endsWith('/changes') &&
       new URL(response.url()).searchParams.get('include_details') === 'true',
   );
-  await dialog.locator('.change-technical > summary').click();
+  await dialog
+    .getByRole('button', { name: '查看处理链路 · 输入 → 候选 → 判断 → 提交' })
+    .click();
   await expect(timeline).toBeVisible();
   const full = await (await fullResponse).json();
   expect(full.details_included).toBe(true);

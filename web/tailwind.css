@@ -786,3 +786,8 @@ select:focus, select:focus-visible { outline: none; border-color: #d4d4d8; box-s
 .event-history-basis .change-proof { margin: 12px 0; }
 .event-history-basis .change-proof p { white-space: pre-wrap; }
 .event-history-basis .change-proof small { display: block; }
+
+/* 本轮增量独立成块，完整引文和核对信息按需展开。 */
+.change-delta { margin: 12px 0; padding: 12px 16px; border-left: 3px solid #b4a35b; background: #faf9f4; border-radius: 0 6px 6px 0; }
+.change-delta h5 { margin: 0 0 8px; color: #52525b; }
+.change-delta p { margin: 6px 0; }
