@@ -94,14 +94,9 @@ function event(id: string) {
   };
 }
 
-test('原事件页按需展开、分页、失败重试和切事件隔离，仅发只读请求', async ({
-  page,
-}) => {
+test('事件详情不展示调试入口，切换事件不读取变化记录', async ({ page }) => {
   const reads: URL[] = [];
   const writes: string[] = [];
-  let fail = false;
-  let delayed = false;
-  let release: (() => void) | undefined;
   await page.route('**/*', async (route) => {
     const url = new URL(route.request().url());
     if (route.request().method() !== 'GET') {
@@ -134,68 +129,22 @@ test('原事件页按需展开、分页、失败重试和切事件隔离，仅�
       });
     if (url.pathname.endsWith('/changes')) {
       reads.push(url);
-      const second = url.pathname.includes('synthetic-second');
-      if (delayed && !second)
-        await new Promise<void>((resolve) => {
-          release = resolve;
-        });
-      if (fail)
-        return route.fulfill({ status: 503, json: { detail: '虚构读取失败' } });
-      const value = data(
-        second ? 'synthetic-second' : 'synthetic-first',
-        second ? '虚构第二事件依据' : '虚构第一事件依据',
-      );
-      if (url.searchParams.get('execution_offset') === '0')
-        value.next_execution_offset = 20;
-      else value.executions = [];
-      return route.fulfill({ json: value });
+      return route.fulfill({ json: data('synthetic-first', '虚构依据') });
     }
     return route.fulfill({ status: 404, json: { detail: '虚构未配置' } });
   });
   await page.goto(`/events?uid=${uid}&stream=${stream}&event=synthetic-first`);
-  const summary = page.locator('.event-history-basis > summary');
-  await expect(summary).toBeVisible();
+  await expect(
+    page.getByRole('complementary', { name: '事件详情' }),
+  ).toBeVisible();
+  await expect(page.getByText('查看历史依据', { exact: true })).toHaveCount(0);
   expect(reads).toHaveLength(0);
-  await summary.click();
-  await expect(
-    page.getByText('虚构第一事件依据', { exact: true }),
-  ).toBeVisible();
-  expect(
-    reads.every(
-      (url) =>
-        url.searchParams.get('uid') === uid &&
-        url.searchParams.get('stream') === stream,
-    ),
-  ).toBe(true);
-  await page.getByRole('button', { name: '查看更早依据' }).click();
-  await expect(
-    page.getByText('本页历史依据未记录；不代表没有发生过相关讨论。'),
-  ).toBeVisible();
-  fail = true;
-  await page.getByRole('button', { name: '回到最新依据' }).click();
-  await expect(page.getByText('虚构读取失败')).toBeVisible();
-  fail = false;
-  delayed = true;
-  await page
-    .locator('.event-history-basis')
-    .getByRole('button', { name: '重试' })
-    .click();
-  await expect.poll(() => !!release).toBe(true);
   await page
     .locator('.event-rows button')
     .filter({ hasText: 'synthetic-second' })
     .click();
-  release?.();
-  await expect(page.locator('.event-history-basis')).not.toHaveAttribute(
-    'open',
-    '',
-  );
-  await summary.click();
-  await expect(
-    page.getByText('虚构第二事件依据', { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByText('虚构第一事件依据', { exact: true })).toHaveCount(
-    0,
-  );
+  await expect(page.locator('.inbox-aside')).toContainText('synthetic-second');
+  await expect(page.getByText('查看历史依据', { exact: true })).toHaveCount(0);
+  expect(reads).toHaveLength(0);
   expect(writes).toEqual([]);
 });

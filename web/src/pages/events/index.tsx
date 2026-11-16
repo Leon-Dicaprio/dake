@@ -10,16 +10,11 @@ import { api } from '@/services/api';
 import { RunProgressLink } from '../runs/RunProgressLink';
 import { EventChangesDrawer } from './EventChangesDrawer';
 import { EventPane } from './EventPane';
+import { EventTimeFilter, timeRanges } from './EventTimeFilter';
+import { inMessageRange } from './eventTimeRange';
 import { eventTitle, revisionHeadline } from './eventTitle';
 
 const DAY = 24 * 60 * 60 * 1000;
-
-const ranges = [
-  { value: '', label: '全部时间', days: 0 },
-  { value: 'today', label: '今天', days: 1 },
-  { value: '3d', label: '近 3 天', days: 3 },
-  { value: '7d', label: '近 7 天', days: 7 },
-];
 
 /** 上海时区的自然日序号，用于按天比较。 */
 function dayIndex(value: string) {
@@ -55,7 +50,12 @@ export default function EventsPage() {
   const stream = params.get('stream') || customer?.stream || '';
   const type = params.get('type') || '';
   const group = (params.get('group') || '').split(',')[0].trim();
-  const range = ranges.find((item) => item.value === params.get('range'));
+  const range = timeRanges.find((item) => item.value === params.get('range'));
+  const startDate = params.get('startDate') || '';
+  const endDate = params.get('endDate') || '';
+  const invalidRange =
+    range?.value === 'custom' &&
+    Boolean(startDate && endDate && startDate > endDate);
   const eventId = params.get('event') || '';
   const dismissed = useRef(false);
   const events = useResource(
@@ -95,21 +95,30 @@ export default function EventsPage() {
           return false;
         }
         if (range?.days && anchor) {
-          const last = Math.max(
-            dayIndex(event.end_time),
-            ...(event.updated_by || []).map((item) =>
-              dayIndex(item.window_start),
-            ),
-          );
+          const last = dayIndex(event.end_time);
           if (last <= anchorDay - range.days) return false;
+        }
+        if (range?.value === 'custom') {
+          return (
+            !invalidRange && inMessageRange(event.end_time, startDate, endDate)
+          );
         }
         return true;
       })
       .sort((left, right) => right.end_time.localeCompare(left.end_time));
-  }, [items, group, range, anchor, anchorDay]);
+  }, [
+    items,
+    group,
+    range,
+    anchor,
+    anchorDay,
+    startDate,
+    endDate,
+    invalidRange,
+  ]);
 
   const selected = visible.find((event) => event.event_id === eventId);
-  const filtering = Boolean(type || group || range?.days);
+  const filtering = Boolean(type || group || range?.value);
 
   function update(values: Record<string, string>) {
     const next = new URLSearchParams(params);
@@ -191,23 +200,14 @@ export default function EventsPage() {
           </select>
           <ChevronDown size={14} />
         </label>
-        <label className="filter-select">
-          <span className="sr-only">时间范围</span>
-          <select
-            aria-label="时间范围"
-            value={range?.value || ''}
-            onChange={(event) =>
-              update({ range: event.target.value, event: '' })
-            }
-          >
-            {ranges.map((item) => (
-              <option key={item.value} value={item.value}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-          <ChevronDown size={14} />
-        </label>
+        <EventTimeFilter
+          key={`${uid}:${stream}`}
+          mode={range?.value || ''}
+          start={startDate}
+          end={endDate}
+          anchor={anchor}
+          onApply={update}
+        />
       </div>
     ) : null;
 
@@ -230,6 +230,9 @@ export default function EventsPage() {
         </div>
       </header>
 
+      {invalidRange ? (
+        <p role="alert">开始日期不能晚于结束日期，请调整范围。</p>
+      ) : null}
       {workspace.error ? (
         <ErrorNotice message={workspace.error} retry={workspace.refresh} />
       ) : null}

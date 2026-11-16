@@ -10,7 +10,6 @@ import {
   messageIdentity,
   shanghaiDay,
 } from './eventTitle';
-import { HistoryBasis } from './HistoryBasis';
 import { evidenceKey, messageKey } from './revisionEvidence';
 
 function present(value: string | null | undefined) {
@@ -274,10 +273,6 @@ export function EventPane({ event }: { event: API.EventResponse }) {
               />
             </dd>
           </dl>
-          <HistoryBasis
-            key={`${event.uid}:${event.stream}:${event.event_id}`}
-            event={event}
-          />
           <dl className="aside-fields">
             <div>
               <dt>类型</dt>
