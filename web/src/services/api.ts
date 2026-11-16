@@ -17,6 +17,7 @@ export const api = {
     offset: number,
     signal?: AbortSignal,
     executionOffset = 0,
+    includeDetails = true,
   ) =>
     getEventChanges(
       {
@@ -25,6 +26,7 @@ export const api = {
         stream,
         offset,
         execution_offset: executionOffset,
+        include_details: includeDetails,
       },
       { signal },
     ),

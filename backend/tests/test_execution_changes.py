@@ -239,6 +239,10 @@ def test_endpoint_is_read_only_and_missing_table_differs_from_query_failure(tmp_
             assert response.json()["execution_records_available"] == present
             if present:
                 assert response.json()["executions"][0]["commit_status"] == "committed"
+                compact = client.get(url, params=dict(uid=UID, stream="stub-v1", include_details=False))
+                assert compact.status_code == 200 and not compact.json()['details_included']
+                assert compact.json()['executions'][0]['inputs'] == []
+                assert compact.json()['revisions'] == response.json()['revisions']
         assert client.get(url, params=dict(uid=UID, stream="wrong")).status_code == 400
         assert client.get(url, params=dict(uid="foreign-customer", stream="stub-v1")).status_code == 404
         assert client.get(url, params=dict(uid=UID, stream="stub-v1", execution_offset=-1)).status_code == 422
@@ -327,4 +331,25 @@ def test_large_stage_query_sorts_only_lightweight_heads_without_database():
     page = Repository(Settings()).list_for_event_changes(
         'synthetic-customer', 'synthetic-stream', 'synthetic-event', limit=2)
     assert [item['attempt_id'] for item in page['items']] == ['b', 'c']
-    assert page['total'] == 3 and len(queries) == 3
+    assert page['total'] == 3 and len(queries) == 4
+
+
+def test_compact_projection_keeps_commit_checks_without_loading_model_details(tmp_path, monkeypatch):
+    """轻量响应仍核对原收据与快照，不能因省略详情而把未决或坏版本标为成功。"""
+    _, attempts, store, _, _, _, event_id = opening(tmp_path)
+    event = store.events[event_id].to_dict()
+    repo = ReadAttempts(attempts.items, event_id)
+    page = repo.list_for_event_changes(event['uid'], event['stream'], event_id)
+    full = execution_changes(event, event['updated_by'], page, 0)
+    def forbidden(*args):
+        raise AssertionError('轻量请求不应解析完整模型消息')
+    monkeypatch.setattr('dake.services.execution_changes._inputs', forbidden)
+    compact = execution_changes(event, event['updated_by'], page, 0, include_details=False)
+    left, right = full['executions'][0], compact['executions'][0]
+    for field in ('attempt_id', 'related_by', 'commit_status', 'revision_indexes', 'delivery', 'outcome'):
+        assert left[field] == right[field]
+    assert right['inputs'] == right['contexts'] == right['suggestions'] == right['decisions'] == []
+    page['items'][0]['outcome'] = 'commit_unknown'
+    event['updated_by'][0]['snapshot'] = None
+    broken = execution_changes(event, event['updated_by'], page, 0, include_details=False)['executions'][0]
+    assert broken['outcome'] == 'commit_unknown' and broken['revision_link_unavailable']

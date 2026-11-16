@@ -8,6 +8,7 @@ import {
 
 function data(): API.EventChangesResponse {
   return {
+    details_included: true,
     uid: 'synthetic-customer',
     stream: 'synthetic-stream',
     event_id: 'synthetic-event',

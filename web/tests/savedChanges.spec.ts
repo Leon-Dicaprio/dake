@@ -113,6 +113,7 @@ function fixture(): API.EventChangesResponse {
     };
   }
   return {
+    details_included: true,
     uid: one.uid,
     stream: one.stream,
     event_id: one.event_id,

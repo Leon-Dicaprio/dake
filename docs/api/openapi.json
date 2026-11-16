@@ -416,6 +416,16 @@
               "default": 0,
               "title": "Execution Offset"
             }
+          },
+          {
+            "name": "include_details",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "title": "Include Details"
+            }
           }
         ],
         "responses": {
@@ -1289,6 +1299,11 @@
             "type": "string",
             "title": "Event Id"
           },
+          "details_included": {
+            "type": "boolean",
+            "title": "Details Included",
+            "default": true
+          },
           "batches": {
             "items": {
               "$ref": "#/components/schemas/EventChangeBatch"
@@ -1368,6 +1383,7 @@
           "uid",
           "stream",
           "event_id",
+          "details_included",
           "batches",
           "tasks",
           "revisions",

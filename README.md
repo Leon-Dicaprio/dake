@@ -8,6 +8,7 @@
 - [docs/项目简报.md](docs/项目简报.md)：现况、领导与官方要求、一期要做成什么样、接口与事件约定、开发约束
 - [docs/群识别与消息过滤开发方案.md](docs/群识别与消息过滤开发方案.md)：待实现的群分类、供应商与内部产品群排除规则、配置及验收要求
 - [docs/多客户接入与定时增量开发方案.md](docs/多客户接入与定时增量开发方案.md)：全量群发现、UID 补查、大客户筛选、主备负责人及定时执行规划
+- [docs/变化面板优化同步说明.md](docs/变化面板优化同步说明.md)：队友同步性能优化分支、执行数据库迁移和本地验证的步骤
 - [docs/大客售后智能系统-技术方案草案.docx](docs/大客售后智能系统-技术方案草案.docx)：架构与增量洗数的详细方案
 - [AGENTS.md](AGENTS.md)：给 Codex / 编程助手的操作约定
 
@@ -40,11 +41,14 @@ docker compose up -d --wait mysql
 docker compose ps
 .venv/bin/dake init-db
 docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" exec mysql --user="$MYSQL_USER" "$MYSQL_DATABASE"' < backend/migrations/001_processing_attempts.sql
+docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" exec mysql --user="$MYSQL_USER" "$MYSQL_DATABASE"' < backend/migrations/002_event_link_hints.sql
 ```
 
 MySQL 8.4 仅监听 `127.0.0.1:3307`，数据库默认 `dake_aftersales`，应用用户默认 `dake`。数据保存在 `data/mysql/`。健康检查使用应用账号执行查询，启动完成后应显示 `healthy`。
 
 业务存储使用 `messages` 和 `events`，网页任务存于 `processing_runs`（API 启动时幂等创建），逐窗口执行与重试存于 `processing_attempts`。执行记录表由 `backend/migrations/001_processing_attempts.sql` 显式迁移；当前本地库已有此表，新环境需先迁移。消息的处理标记与事件更新在同一事务提交；`data/state/` 的水位仅帮助选择下一次窗口，丢失后可依据数据库记录去重。
+
+`002_event_link_hints.sql` 为变化面板增加自动生成的轻量事件引用提示列，已有阶段和收据保持原样。每个库只执行一次；执行前可用 `SHOW COLUMNS FROM processing_attempts LIKE 'event_link_hints'` 确认是否已迁移。迁移会计算存量记录并可能锁表，应在无执行中任务的维护时段运行。未迁移时查询兼容原扫描方式，但性能较慢；应用启动及 GET 查询不会隐式迁移。
 
 `docker compose stop mysql` 可停止数据库；再次运行启动命令会使用原有数据。初始化账号和密码只在空数据目录首次启动时生效，修改 `.env` 不会自动修改已有数据库密码。
 
@@ -74,6 +78,8 @@ npm run dev
 
 - **事件**：按客户和六类主类型筛选，查看事件详情、消息证据和历次变化。
 - **处理记录**：选择客户、日期范围、处理周期和数据读取方式，提交后台处理，查看逐轮新建、更新与待确认。刷新后可继续查看持久化记录。
+
+变化面板首次仅加载已保存修订、关联执行状态和提交核对结果；展开“处理详情”后再加载模型输入及判断依据。有未结束的关联执行或任务时才自动轮询，其他情况可点击“刷新”。接口 `include_details` 缺省为 `true` 以兼容现有调用，网页首屏显式传 `false`；响应的 `details_included` 区分详情未加载和确实没有记录。
 
 真实客户抽取需显式设置 `LLM_PROVIDER=xhub`；默认 `stub` 只验证处理链路，不生成分析事件。
 

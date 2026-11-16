@@ -356,6 +356,7 @@ class EventChangesResponse(APIModel):
     uid: str
     stream: str
     event_id: str
+    details_included: bool = True
     batches: list[EventChangeBatch]
     tasks: list[ScopedChangeTask]
     revisions: list[EventRevision]

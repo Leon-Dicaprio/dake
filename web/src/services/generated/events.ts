@@ -43,6 +43,8 @@ export async function getEventChanges(
   return request<API.EventChangesResponse>(`/api/v1/events/${param0}/changes`, {
     method: "GET",
     params: {
+      // include_details has a default value: true
+      include_details: "true",
       ...queryParams,
     },
     ...(options || {}),

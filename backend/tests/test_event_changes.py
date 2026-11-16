@@ -166,12 +166,13 @@ def test_scoped_repository_binds_scope_before_pagination_without_db(event_id):
     result = Repository(Settings()).list_for_event_changes(TEST_UID, TEST_STREAM, 20, event_id=event_id)
     assert result == dict(items=[], total=0)
     assert all("uid=%s" in sql and "analysis_stream" in sql for sql, _ in calls)
-    assert calls[0][1][:2] == (TEST_UID, TEST_STREAM)
-    assert calls[0][1][-2:] == (CHANGE_RUN_PAGE_SIZE, 20)
     if event_id:
-        assert all("JSON_CONTAINS(cycles,CAST(%s AS JSON))" in sql for sql, _ in calls)
-        assert all('"uid"' in value and event_id in value and TEST_STREAM in value
-                   for value in calls[0][1][6:-2])
+        assert calls[0][1] == (TEST_UID, TEST_UID, TEST_STREAM, TEST_STREAM, *([event_id] * 5))
+        assert "JSON_TABLE" in calls[0][0] and "a.kind='event_attribution'" in calls[0][0]
+        assert "$.events" not in calls[0][0]
+    else:
+        assert calls[0][1][:2] == (TEST_UID, TEST_STREAM)
+        assert calls[0][1][-2:] == (CHANGE_RUN_PAGE_SIZE, 20)
 
 
 def test_repository_sorts_ids_before_loading_large_cycle_payloads():

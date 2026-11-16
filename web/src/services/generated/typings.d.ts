@@ -173,6 +173,8 @@ declare namespace API {
     stream: string;
     /** Event Id */
     event_id: string;
+    /** Details Included */
+    details_included: boolean;
     /** Batches */
     batches: EventChangeBatch[];
     /** Tasks */
@@ -563,6 +565,7 @@ declare namespace API {
     stream: string;
     offset?: number;
     execution_offset?: number;
+    include_details?: boolean;
   };
 
   type getEventParams = {

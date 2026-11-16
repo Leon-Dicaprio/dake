@@ -91,6 +91,7 @@ test('右侧只展示当前详情，历史变化集中在变化面板', () => {
   const markup = renderToStaticMarkup(
     createElement(SavedChanges, {
       data: {
+        details_included: true,
         uid: current.uid,
         stream: current.stream,
         event_id: current.event_id,

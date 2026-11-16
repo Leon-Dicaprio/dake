@@ -79,7 +79,7 @@ def event_changes(event, page, offset, known_attempt_ids=()):
                       and r.get("revision_no") is not None}
             revision_indexes = [i for i, r in enumerate(revisions) if r.get("revision_no") in linked
                 and r.get("window_start") == window["start"] and r.get("window_end") == window["end"]]
-            batches.append(dict(run_id=run["run_id"], cycle_index=index, window=window,
+            batches.append(dict(run_id=run["run_id"], cycle_index=cycle.get("_cycle_index", index), window=window,
                 processed=cycle.get("processed"), counts_complete=cycle.get("counts_complete", True),
                 recovered_from_history=cycle.get("recovered_from_history", False),
                 created=created, updated=updated, attributions=[_attribution(r) for r in records],

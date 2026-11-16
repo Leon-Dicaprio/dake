@@ -108,7 +108,7 @@ def _commit(record, event, revisions):
         revision_indexes=indexes, revision_link_unavailable=len(indexes) != len(writes))
 
 
-def execution_changes(event, revisions, page, offset):
+def execution_changes(event, revisions, page, offset, *, include_details=True):
     """列表与投影双重限制范围；只读收据，不把读取操作变成显式核实。"""
     result = []
     known, related = set(page.get("known_ids", [])), set(page.get("related_ids", []))
@@ -125,49 +125,52 @@ def execution_changes(event, revisions, page, offset):
             continue
         stages = [s for s in record.get("stages", []) if isinstance(s.get("payload"), dict)
                   and _scoped(s["payload"].get("input", {}), event)]
-        inputs = _inputs(stages, event)
-        model_inputs = [s["payload"]["input"] for s in stages if s["stage"] == "model_started" and "input" in s["payload"]]
-        sent_ids = {c.get("event_id") for body in model_inputs for c in body.get("existing_events", [])}
-        candidates, contexts, context_reasons, omitted = [], [], [], None
-        for stage in stages:
-            payload = stage["payload"]
-            if stage["stage"] == "history":
-                candidates.extend(dict(event_id=c["event_id"], summary=c.get("summary"), status=c.get("status"),
-                    hit_reasons=c.get("hit_reasons", []), selected_for_request=c["event_id"] in sent_ids if model_inputs else None)
-                    for c in payload.get("candidates", []) if _scoped(c, event))
-            if stage["stage"] == "history_context" and payload.get("result"):
-                packet = payload["result"]
-                if not _scoped(packet, event):
-                    continue
-                context_reasons, omitted = packet.get("reasons", []), packet.get("omitted")
-                for message in packet.get("items", []):
-                    if not _scoped(message, event):
+        inputs, candidates, contexts, context_reasons, suggestions, decisions = [], [], [], [], [], []
+        omitted = None
+        if include_details:
+            inputs = _inputs(stages, event)
+            model_inputs = [s["payload"]["input"] for s in stages if s["stage"] == "model_started" and "input" in s["payload"]]
+            sent_ids = {c.get("event_id") for body in model_inputs for c in body.get("existing_events", [])}
+            candidates, contexts, context_reasons, omitted = [], [], [], None
+            for stage in stages:
+                payload = stage["payload"]
+                if stage["stage"] == "history":
+                    candidates.extend(dict(event_id=c["event_id"], summary=c.get("summary"), status=c.get("status"),
+                        hit_reasons=c.get("hit_reasons", []), selected_for_request=c["event_id"] in sent_ids if model_inputs else None)
+                        for c in payload.get("candidates", []) if _scoped(c, event))
+                if stage["stage"] == "history_context" and payload.get("result"):
+                    packet = payload["result"]
+                    if not _scoped(packet, event):
                         continue
-                    selected = any(any((m.get("source"), m.get("message_id"), m.get("digest")) ==
-                        (message.get("source"), message.get("message_id"), message.get("digest"))
-                        for m in body.get("history_context", {}).get("items", [])) for body in model_inputs)
-                    fragments = message.get("fragments", [])
-                    contexts.append(dict(_ref(message, "history"), fragments=fragments, links=message.get("links", []),
-                        availability=message.get("availability"), truncated=message.get("truncated"),
-                        selected_for_request=selected if model_inputs else None))
-        saved = [m for group in inputs for field in ("new_messages", "auxiliary_messages") for m in group[field]]
-        saved += [dict(m, quote=f["text"]) for m in contexts for f in m["fragments"]]
-        suggestions, decisions = [], []
-        final = [s for s in stages if s["stage"] == "suggestions"]
-        for stage in final or [s for s in stages if s["stage"] == "model_completed"]:
-            for raw in stage["payload"].get("suggestions", []):
-                value = raw.get("value", raw)
-                suggestions.append(dict(proposal_id=raw.get("proposal_id"), call_no=stage["payload"].get("call_no"),
-                    action=value.get("decision"), event_id=value.get("referenced_event_id"),
-                    possible_event_ids=value.get("possible_event_ids", []), summary=value.get("summary"), status=value.get("status"),
-                    reason=value.get("decision_reason"), facts=[c["text"] for c in value.get("changes") or []],
-                    basis=_basis(value.get("basis", []), saved)))
-        for stage in stages:
-            if stage["stage"] == "decision":
-                value = stage["payload"]
-                decisions.append({k: deepcopy(value.get(k)) for k in ("proposal_id", "action", "event_id", "reason", "before", "after",
-                    "contributed_to_revision", "change_scope")} | dict(possible_event_ids=value.get("possible_event_ids", []),
-                    added_evidence=[_ref(r, "new") for r in value.get("evidence_delta", {}).get("added", [])]))
+                    context_reasons, omitted = packet.get("reasons", []), packet.get("omitted")
+                    for message in packet.get("items", []):
+                        if not _scoped(message, event):
+                            continue
+                        selected = any(any((m.get("source"), m.get("message_id"), m.get("digest")) ==
+                            (message.get("source"), message.get("message_id"), message.get("digest"))
+                            for m in body.get("history_context", {}).get("items", [])) for body in model_inputs)
+                        fragments = message.get("fragments", [])
+                        contexts.append(dict(_ref(message, "history"), fragments=fragments, links=message.get("links", []),
+                            availability=message.get("availability"), truncated=message.get("truncated"),
+                            selected_for_request=selected if model_inputs else None))
+            saved = [m for group in inputs for field in ("new_messages", "auxiliary_messages") for m in group[field]]
+            saved += [dict(m, quote=f["text"]) for m in contexts for f in m["fragments"]]
+            suggestions, decisions = [], []
+            final = [s for s in stages if s["stage"] == "suggestions"]
+            for stage in final or [s for s in stages if s["stage"] == "model_completed"]:
+                for raw in stage["payload"].get("suggestions", []):
+                    value = raw.get("value", raw)
+                    suggestions.append(dict(proposal_id=raw.get("proposal_id"), call_no=stage["payload"].get("call_no"),
+                        action=value.get("decision"), event_id=value.get("referenced_event_id"),
+                        possible_event_ids=value.get("possible_event_ids", []), summary=value.get("summary"), status=value.get("status"),
+                        reason=value.get("decision_reason"), facts=[c["text"] for c in value.get("changes") or []],
+                        basis=_basis(value.get("basis", []), saved)))
+            for stage in stages:
+                if stage["stage"] == "decision":
+                    value = stage["payload"]
+                    decisions.append({k: deepcopy(value.get(k)) for k in ("proposal_id", "action", "event_id", "reason", "before", "after",
+                        "contributed_to_revision", "change_scope")} | dict(possible_event_ids=value.get("possible_event_ids", []),
+                        added_evidence=[_ref(r, "new") for r in value.get("evidence_delta", {}).get("added", [])]))
         parent = record.get("retry_of")
         result.append(dict(attempt_id=record["attempt_id"], run_id=record.get("run_id"), window_index=record.get("window_index"),
             window=dict(start=record["window_start"], end=record["window_end"]), outcome=record["outcome"],

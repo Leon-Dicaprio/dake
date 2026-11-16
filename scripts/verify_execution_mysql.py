@@ -52,7 +52,9 @@ def main(argv=None):
             if args.suite in {"panel", "all"}:
                 files.append(str(root / "backend/tests/test_execution_panel_mysql.py"))
             plugin = DatabasePlugin(target)
-            result = int(pytest.main(["--noconftest", "-p", "no:cacheprovider", "-q", "--tb=short", *files], plugins=[plugin]))
+            # 使用本次独立临时目录，避免 pytest 清理其他测试遗留的环境文件而触发隔离保护。
+            result = int(pytest.main(["--noconftest", "-p", "no:cacheprovider", "-q", "--tb=short",
+                                     "--basetemp", str(Path(data_dir) / "pytest"), *files], plugins=[plugin]))
             if result == 0 and args.panel_manifest:
                 write_manifest(args.panel_manifest, target, plugin.panel_cases)
                 print("面板实库用例已全部通过；虚构案例索引已保存，可另用只读账号启动合成服务。")

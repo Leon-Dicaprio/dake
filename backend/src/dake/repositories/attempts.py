@@ -71,9 +71,29 @@ class AttemptRepository:
                 "WHERE table_schema=DATABASE() AND table_name='processing_attempts'")
             if not present:
                 return dict(available=False, items=[], total=0, known_ids=[], related_ids=[])
+            columns, _ = store._execute("SELECT column_name AS column_name FROM information_schema.columns "
+                "WHERE table_schema=DATABASE() AND table_name='processing_attempts' "
+                "AND column_name='event_link_hints'")
+            accelerated = any(row.get("column_name") == "event_link_hints" for row in columns)
             # JSON 关联表达式可能让排序缓冲携带大正文；仅在内存排序返回的轻量身份。
-            heads, _ = store._execute("SELECT attempt_id,retry_of,created_at,(" + predicate + ") AS related "
-                "FROM processing_attempts WHERE uid=%s AND stream=%s", args + (uid, stream))
+            if accelerated:
+                # 分两次查询，避免 CASE 表达式使不相关行的大阶段正文也被读入。
+                heads, _ = store._execute("SELECT attempt_id,retry_of,created_at,"
+                    "JSON_CONTAINS(event_link_hints,JSON_QUOTE(%s)) AS related "
+                    "FROM processing_attempts WHERE uid=%s AND stream=%s", (event_id, uid, stream))
+                hinted = [row["attempt_id"] for row in heads if row["related"]]
+                exact = set()
+                for start in range(0, len(hinted), 200):
+                    ids = hinted[start:start + 200]
+                    matches, _ = store._execute("SELECT attempt_id FROM processing_attempts WHERE uid=%s AND stream=%s "
+                        "AND attempt_id IN (" + ",".join(["%s"] * len(ids)) + ") AND (" + predicate + ")",
+                        (uid, stream, *ids, *args))
+                    exact.update(row["attempt_id"] for row in matches)
+                for row in heads:
+                    row["related"] = row["attempt_id"] in exact
+            else:
+                heads, _ = store._execute("SELECT attempt_id,retry_of,created_at,(" + predicate + ") AS related "
+                    "FROM processing_attempts WHERE uid=%s AND stream=%s", args + (uid, stream))
             heads.sort(key=lambda row: (row["created_at"], row["attempt_id"]), reverse=True)
             known = {r["attempt_id"] for r in heads}
             related = {r["attempt_id"] for r in heads if r["related"] or r["attempt_id"] in revision_attempt_ids}

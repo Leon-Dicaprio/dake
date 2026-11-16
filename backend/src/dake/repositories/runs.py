@@ -160,14 +160,10 @@ class RunRepository:
 
     def list_for_event_changes(self, uid, stream, offset=0, event_id=None):
         """按范围分页取既有记录；先过滤再分页，不把其他客户周期带入面板。"""
+        if event_id is not None:
+            return self._event_change_cycles(uid, stream, event_id, offset)
         where = RUN_SCOPE_CONDITION
         args = _scope_args(uid, stream)
-        if event_id is not None:
-            matches = [dict(created=[event_id]), dict(updated=[event_id]),
-                dict(filter_audit=[dict(kind="event_attribution", event_id=event_id)]),
-                dict(filter_audit=[dict(kind="event_attribution", possible_event_ids=[event_id])])]
-            where += " AND (" + " OR ".join("JSON_CONTAINS(cycles,CAST(%s AS JSON))" for _ in matches) + ")"
-            args += tuple(_encoded([dict(uid=uid, stream=stream, **value)]) for value in matches)
         with self.connection() as store:
             selected, _ = store._execute("SELECT run_id FROM processing_runs WHERE "
                 + where + " ORDER BY created_at DESC,run_id DESC LIMIT %s OFFSET %s",
@@ -181,6 +177,53 @@ class RunRepository:
                     + where + " AND run_id IN (" + ",".join(["%s"] * len(ids)) + ")", args + tuple(ids))
         by_id = {row["run_id"]: row for row in rows}
         return {"items": [self._record(by_id[rid], internal=True) for rid in ids if rid in by_id], "total": counts[0]["total"]}
+
+    def _event_change_cycles(self, uid, stream, event_id, offset):
+        """只展开周期身份、写入列表与归属依据，避免扫描和传输全量事件快照。"""
+        projection = """ FROM processing_runs AS r JOIN JSON_TABLE(r.cycles,'$[*]' COLUMNS(
+            ordinal FOR ORDINALITY,
+            cycle_uid VARCHAR(128) COLLATE utf8mb4_bin PATH '$.uid',
+            cycle_stream VARCHAR(128) COLLATE utf8mb4_bin PATH '$.stream',
+            cycle_window JSON PATH '$.window',
+            attempt_id VARCHAR(36) PATH '$.attempt_id',
+            created JSON PATH '$.created', updated JSON PATH '$.updated',
+            filter_audit JSON PATH '$.filter_audit',
+            processed INT PATH '$.processed', counts_complete BOOL PATH '$.counts_complete',
+            recovered_from_history BOOL PATH '$.recovered_from_history'
+        )) AS c ON TRUE WHERE r.uid=%s AND c.cycle_uid=%s AND c.cycle_stream=%s
+        AND (COALESCE(JSON_TYPE(JSON_EXTRACT(r.request,'$.analysis_stream')),'NULL')='NULL'
+             OR JSON_UNQUOTE(JSON_EXTRACT(r.request,'$.analysis_stream'))=%s)
+        AND JSON_CONTAINS(JSON_EXTRACT(r.cycles,'$[*].created','$[*].updated',
+            '$[*].filter_audit[*].event_id','$[*].filter_audit[*].possible_event_ids'),JSON_QUOTE(%s))
+        AND (JSON_CONTAINS(c.created,JSON_QUOTE(%s)) OR JSON_CONTAINS(c.updated,JSON_QUOTE(%s))
+             OR EXISTS (SELECT 1 FROM JSON_TABLE(c.filter_audit,'$[*]' COLUMNS(
+                 kind VARCHAR(64) COLLATE utf8mb4_bin PATH '$.kind',
+                 event_id VARCHAR(64) COLLATE utf8mb4_bin PATH '$.event_id',
+                 possible_event_ids JSON PATH '$.possible_event_ids'
+             )) AS a WHERE a.kind='event_attribution'
+                 AND (a.event_id=%s OR JSON_CONTAINS(a.possible_event_ids,JSON_QUOTE(%s)))))"""
+        args = (uid, uid, stream, stream, event_id, event_id, event_id, event_id, event_id)
+        with self.connection() as store:
+            heads, _ = store._execute("SELECT DISTINCT r.run_id,r.created_at" + projection
+                + " ORDER BY r.created_at DESC,r.run_id DESC", args)
+            ids = [r["run_id"] for r in heads[offset:offset + CHANGE_RUN_PAGE_SIZE]]
+            if not ids:
+                return dict(items=[], total=len(heads))
+            columns = ",".join("r." + column for column in SUMMARY_COLUMNS.split(","))
+            rows, _ = store._execute("SELECT " + columns + ",r.recovered_by,c.*" + projection
+                + " AND r.run_id IN (" + ",".join(["%s"] * len(ids)) + ") ORDER BY c.ordinal", args + tuple(ids))
+        by_id = {}
+        for row in rows:
+            if row["run_id"] not in by_id:
+                by_id[row["run_id"]] = self._record(row, internal=True)
+            by_id[row["run_id"]]["cycles"].append(dict(
+                uid=row["cycle_uid"], stream=row["cycle_stream"], window=_decode(row["cycle_window"]),
+                _cycle_index=row["ordinal"] - 1, attempt_id=row["attempt_id"],
+                created=_decode(row["created"], []), updated=_decode(row["updated"], []),
+                filter_audit=_decode(row["filter_audit"], []), processed=row["processed"],
+                counts_complete=row["counts_complete"] if row["counts_complete"] is not None else True,
+                recovered_from_history=bool(row["recovered_from_history"])))
+        return dict(items=[by_id[rid] for rid in ids], total=len(heads))
 
     def recover_interrupted(self):
         """仅由拿到全局执行锁的实例调用；保留已完成周期，明确中断状态。"""

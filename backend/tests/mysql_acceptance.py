@@ -105,6 +105,7 @@ def prepare_database(target, data_dir, *, store_factory=MySQLStore):
         store.init_schema()
         migration = ROOT / "backend/migrations/001_processing_attempts.sql"
         store._execute(migration.read_text(encoding="utf-8"))
+        store._execute((ROOT / "backend/migrations/002_event_link_hints.sql").read_text(encoding="utf-8"))
         RunRepository(target.settings(data_dir), store_factory=store_factory).init_schema()
     finally:
         store.close()

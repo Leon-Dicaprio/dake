@@ -90,7 +90,7 @@ class QueryService:
         items = self.events(uid, stream)["items"]
         return next((event for event in items if event["event_id"] == event_id), None)
 
-    def event_changes(self, event_id, uid, stream, runs, offset=0, execution_offset=0):
+    def event_changes(self, event_id, uid, stream, runs, offset=0, execution_offset=0, *, include_details=True):
         """变化面板只读已保存事件与批次，不补查当前消息或私有模型日志。"""
         uid, stream = self.scope(uid, stream)
         with self.connection() as store:
@@ -102,5 +102,11 @@ class QueryService:
                 {r["attempt_id"] for r in value.get("updated_by", []) if r.get("attempt_id")}, execution_offset)
         result = event_changes(value, runs.list_for_event_changes(uid, stream, offset, event_id=event_id), offset,
                                set(attempts["known_ids"]))
-        result.update(execution_changes(value, result["revisions"], attempts, execution_offset))
+        result.update(execution_changes(value, result["revisions"], attempts, execution_offset,
+                                        include_details=include_details))
+        result["details_included"] = include_details
+        if not include_details:
+            # 时间线仍保留修订和提交核对结果；旧批次的大段依据在展开详情后读取。
+            for batch in result["batches"]:
+                batch["attributions"] = []
         return result

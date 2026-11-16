@@ -41,9 +41,11 @@ def get_event_changes(deps: Deps, event_id: str = Path(min_length=1, max_length=
                       uid: str = Query(min_length=1, max_length=128),
                       stream: str = Query(min_length=1, max_length=128),
                       offset: int = Query(default=0, ge=0),
-                      execution_offset: int = Query(default=0, ge=0)):
+                      execution_offset: int = Query(default=0, ge=0),
+                      include_details: bool = Query(default=True)):
     """必须明确客户和分析范围，读取已保存批次与版本；不运行处理。"""
-    result = deps.queries.event_changes(event_id, uid, stream, deps.runs, offset, execution_offset)
+    result = deps.queries.event_changes(event_id, uid, stream, deps.runs, offset, execution_offset,
+                                       include_details=include_details)
     if result is None:
         raise HTTPException(status_code=404, detail="该客户下未找到事件")
     return result

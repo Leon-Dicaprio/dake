@@ -3,6 +3,7 @@
 from copy import deepcopy
 from dataclasses import replace
 from uuid import uuid4
+import json
 
 import pymysql
 import pytest
@@ -13,6 +14,7 @@ from dake.repositories.attempts import AttemptError, AttemptPendingVerification,
 from dake.repositories.mysql import MySQLStore
 from dake.repositories.runs import RunRepository
 from dake.services.queries import QueryService
+from dake.domain.execution_links import event_link_patterns
 from offline_http import TestClient
 from panel_preview import create_preview
 from test_attribution import candidate, message, window
@@ -21,6 +23,57 @@ from test_summary_history import change
 
 
 pytestmark = pytest.mark.isolated_mysql
+
+
+def test_generated_hints_preserve_every_exact_link_and_reject_false_hits(case):
+    """新生成列必须覆盖所有正式路径，提示误命中仍由原条件排除。"""
+    target = 'synthetic-target-event'
+    repository = case.service.attempts
+    expected = set()
+    for _, field, value in event_link_patterns(target):
+        attempt_id = repository.create(case.uid, case.provider.name, window(1))
+        expected.add(attempt_id)
+        with repository.connection() as store:
+            store._execute('UPDATE processing_attempts SET ' + field + '=CAST(%s AS JSON) WHERE attempt_id=%s',
+                           (json.dumps(value), attempt_id))
+    for value in (
+        [dict(stage='unrelated', payload=dict(candidates=[dict(event_id=target)]))],
+        [dict(stage='history', payload=dict(candidates=[dict(event_id=target.upper())]))],
+        [dict(stage='program_result', payload=dict(events=[dict(event_id=target)]))],
+    ):
+        attempt_id = repository.create(case.uid, case.provider.name, window(1))
+        with repository.connection() as store:
+            store._execute('UPDATE processing_attempts SET stages=CAST(%s AS JSON) WHERE attempt_id=%s',
+                           (json.dumps(value), attempt_id))
+    page = repository.list_for_event_changes(case.uid, case.provider.name, target, limit=100)
+    assert set(page['related_ids']) == expected
+    assert {row['attempt_id'] for row in page['items']} == expected
+
+
+def test_cycle_projection_preserves_scope_audit_and_original_position(case):
+    """展开后的周期序号、旧范围判定与精确审计关联保持不变，快照成员不算关联。"""
+    target = 'synthetic-target-event'
+    repository = RunRepository(case.settings)
+    run = repository.create(dict(uid=case.uid, mode='official', analysis_stream=case.provider.name), 5)
+    base = dict(uid=case.uid, stream=case.provider.name,
+                window=dict(start=window(1).start.isoformat(), end=window(1).end.isoformat()),
+                created=[], updated=[], filter_audit=[], events=[dict(event_id=target)])
+    cycles = [deepcopy(base) for _ in range(5)]
+    cycles[1]['filter_audit'] = [dict(kind='unrelated', event_id=target)]
+    cycles[2].update(uid=case.uid + '-foreign', created=[target])
+    cycles[3]['filter_audit'] = [dict(kind='event_attribution', possible_event_ids=[target])]
+    cycles[4]['updated'] = [target]
+    with repository.connection() as store:
+        store._execute("UPDATE processing_runs SET cycles=CAST(%s AS JSON),status='succeeded' WHERE run_id=%s",
+                       (json.dumps(cycles), run['run_id']))
+    page = repository.list_for_event_changes(case.uid, case.provider.name, event_id=target)
+    assert page['total'] == 1
+    assert [c['_cycle_index'] for c in page['items'][0]['cycles']] == [3, 4]
+    assert all('events' not in c for c in page['items'][0]['cycles'])
+    with repository.connection() as store:
+        store._execute("UPDATE processing_runs SET request=CAST(%s AS JSON) WHERE run_id=%s",
+                       (json.dumps(dict(analysis_stream='foreign-stream')), run['run_id']))
+    assert repository.list_for_event_changes(case.uid, case.provider.name, event_id=target)['total'] == 0
 
 
 def view(case, event_id, *, offset=0):

@@ -180,9 +180,11 @@ export function ChangeBatch({
 export function ChangesContent({
   data,
   children,
+  onDetailsOpen,
 }: {
   data: API.EventChangesResponse;
   children?: ReactNode;
+  onDetailsOpen?: () => void;
 }) {
   const recovered = new Map<string, API.EventExecution>();
   const pending = (data.executions || []).filter(
@@ -260,60 +262,72 @@ export function ChangesContent({
           完整执行记录暂不可用；上方仍展示已保存版本，缺失过程不补造。
         </p>
       ) : null}
-      <details className="change-section change-technical">
+      <details
+        className="change-section change-technical"
+        onToggle={(event) => {
+          if (event.currentTarget.open) onDetailsOpen?.();
+        }}
+      >
         <summary>处理详情 · 候选、判断、提交与重试</summary>
-        <p>
-          候选命中、无变化或仅恢复展示的执行不增加主列表条目。建议与程序拟变化不是提交结果。
-        </p>
-        <h3>与本事件有关的执行批次</h3>
-        {(data.executions || []).map((item) => (
-          <ExecutionChanges key={item.attempt_id} item={item} data={data} />
-        ))}
-        {data.batches.length ? <h3>旧批次记录</h3> : null}
-        {data.batches.length ? (
-          data.batches.map((batch) => (
-            <ChangeBatch
-              key={`${batch.run_id}:${batch.cycle_index}`}
-              batch={batch}
-              data={data}
-            />
-          ))
-        ) : !(data.executions || []).length ? (
-          <EmptyState title="本页没有当前事件的关联批次记录" />
-        ) : null}
-        <details className="change-section">
-          <summary>原始版本记录 · {data.revisions.length} 版</summary>
-          <p>
-            这里保留全部已保存版本；没有归属收据指向时，与具体任务的关系未记录。
-          </p>
-          {data.revisions.map((revision, index) => (
-            <details
-              // biome-ignore lint/suspicious/noArrayIndexKey: 修订历史只追加，旧版无版本号时使用其保存位置。
-              key={index}
-              className="change-batch"
-            >
-              <summary>
-                版本 {revision.revision_no ?? '未记录'} ·{' '}
-                {formatTime(revision.window_start)}
-              </summary>
-              <VersionDifference
-                revision={revision}
-                previous={data.revisions[index - 1]?.snapshot}
-              />
+        {data.details_included === false ? (
+          <p>处理详情尚未加载，正在读取；读取失败时可点击刷新重试。</p>
+        ) : (
+          <>
+            <p>
+              候选命中、无变化或仅恢复展示的执行不增加主列表条目。建议与程序拟变化不是提交结果。
+            </p>
+            <h3>与本事件有关的执行批次</h3>
+            {(data.executions || []).map((item) => (
+              <ExecutionChanges key={item.attempt_id} item={item} data={data} />
+            ))}
+            {data.batches.length ? <h3>旧批次记录</h3> : null}
+            {data.batches.length ? (
+              data.batches.map((batch) => (
+                <ChangeBatch
+                  key={`${batch.run_id}:${batch.cycle_index}`}
+                  batch={batch}
+                  data={data}
+                />
+              ))
+            ) : !(data.executions || []).length ? (
+              <EmptyState title="本页没有当前事件的关联批次记录" />
+            ) : null}
+            <details className="change-section">
+              <summary>原始版本记录 · {data.revisions.length} 版</summary>
+              <p>
+                这里保留全部已保存版本；没有归属收据指向时，与具体任务的关系未记录。
+              </p>
+              {data.revisions.map((revision, index) => (
+                <details
+                  // biome-ignore lint/suspicious/noArrayIndexKey: 修订历史只追加，旧版无版本号时使用其保存位置。
+                  key={index}
+                  className="change-batch"
+                >
+                  <summary>
+                    版本 {revision.revision_no ?? '未记录'} ·{' '}
+                    {formatTime(revision.window_start)}
+                  </summary>
+                  <VersionDifference
+                    revision={revision}
+                    previous={data.revisions[index - 1]?.snapshot}
+                  />
+                </details>
+              ))}
             </details>
-          ))}
-        </details>
-        {children}
+            {children}
+          </>
+        )}
       </details>
     </>
   );
 }
 
-/** 抽屉打开时读取并轮询；事件或范围切换由父组件重新挂载，旧请求取消。 */
+/** 首次只取变化和异常；详情按需加载，有未结束的关联任务时才轮询。 */
 export function EventChangesDrawer({ event }: { event?: API.EventResponse }) {
   const [open, setOpen] = useState(false);
   const [offset, setOffset] = useState(0);
   const [executionOffset, setExecutionOffset] = useState(0);
+  const [detailsRequested, setDetailsRequested] = useState(false);
   const key =
     event && open
       ? JSON.stringify([
@@ -335,8 +349,12 @@ export function EventChangesDrawer({ event }: { event?: API.EventResponse }) {
         offset,
         signal,
         executionOffset,
+        detailsRequested,
       ),
     3000,
+    (data) =>
+      data.executions.some((item) => item.outcome === 'running') ||
+      data.tasks.some((item) => ['queued', 'running'].includes(item.status)),
   );
   return (
     <Dialog
@@ -346,6 +364,7 @@ export function EventChangesDrawer({ event }: { event?: API.EventResponse }) {
         if (!value) {
           setOffset(0);
           setExecutionOffset(0);
+          setDetailsRequested(false);
         }
       }}
     >
@@ -364,6 +383,13 @@ export function EventChangesDrawer({ event }: { event?: API.EventResponse }) {
           description={event ? eventTitle(event) : '请先选择事件'}
         />
         <div className="event-changes-scroll">
+          <Button
+            variant="ghost"
+            onClick={resource.refresh}
+            disabled={resource.loading}
+          >
+            刷新
+          </Button>
           {event ? (
             <p className="change-muted">当前事件 {event.event_id}</p>
           ) : null}
@@ -375,7 +401,15 @@ export function EventChangesDrawer({ event }: { event?: API.EventResponse }) {
           ) : null}
           {resource.loading && !resource.data ? <LoadingRows /> : null}
           {resource.data ? (
-            <ChangesContent data={resource.data}>
+            <ChangesContent
+              data={resource.data}
+              onDetailsOpen={() => {
+                if (!detailsRequested) {
+                  setDetailsRequested(true);
+                  resource.refresh();
+                }
+              }}
+            >
               <div className="change-pagination">
                 <span>
                   本事件关联执行共 {resource.data.total_executions ?? 0} 次
