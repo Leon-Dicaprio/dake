@@ -58,6 +58,10 @@ def normalize_uncertain_reference(candidate, existing_events):
                  event_id=previous)]
 
 
+class ContinuityActionConflict(ContractError):
+    """直接证据有效，但恢复边界与建议动作互相矛盾，不能据此写入事件。"""
+
+
 def validate_continuity(candidate, available, eligible_keys):
     """先核对协议和本批引文；身份及恢复先后在按时间执行时再核对。"""
     if candidate.continuity is None:
@@ -67,8 +71,7 @@ def validate_continuity(candidate, available, eligible_keys):
     except ValueError:
         raise ContractError("恢复或复发依据不符合合约") from None
     expected = "new" if fact.kind == "recurrence" else "review" if fact.kind == "uncertain" else "update"
-    if candidate.decision != expected or bool(fact.previous_event_id) != (fact.kind == "recurrence"):
-        raise ContractError("恢复边界与归属动作或前次事件引用不一致")
+    conflict = candidate.decision != expected or bool(fact.previous_event_id) != (fact.kind == "recurrence")
     change_refs = [ref for change in candidate.changes or [] for ref in change["evidence"]]
     for ref in fact.evidence:
         message = available.get(ref.message_id)
@@ -80,6 +83,8 @@ def validate_continuity(candidate, available, eligible_keys):
             raise ContractError("恢复或复发依据必须同时出现在本轮变化事实中")
     if fact.kind == "recurrence" and not any(ref.message_id in eligible_keys for ref in fact.evidence):
         raise ContractError("恢复或复发不能仅由机器人通知推动")
+    if conflict:
+        raise ContinuityActionConflict("恢复边界与归属动作或前次事件引用不一致")
 
 
 def recovery_is_safe(event, before, *, require_evidence=True):

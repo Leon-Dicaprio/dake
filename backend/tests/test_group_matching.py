@@ -42,6 +42,20 @@ def test_same_group_progress_keeps_id_and_object(tmp_path):
     assert all(m.conversation_id == case[4].conversation_id for m in case[2].calls[-1][0] + case[2].calls[-1][1])
 
 
+def test_group_candidates_survive_lexical_miss_and_keyword_cap(tmp_path):
+    case = setup(tmp_path)
+    service = case[0]
+    service.history_retriever.limits = HistoryRetrievalSettings(keyword_limit=1)
+    msg = message('short-follow', 2, '橙鹿票据 星舟网关，现在确认上次的故障有新进展')
+    history = service.history_retriever.retrieve(UID, service.stream, [msg], window(2).end,
+        conversation=(msg.source, msg.conversation_id))
+    assert history.clues_limited and not history.metadata()['incomplete']
+    assert 'conversation_candidate' in history.candidates[0].hit_reasons
+    result = follow(case, msg)
+    assert result.updated == [case[-1]] and not result.review
+    assert [e.event_id for e in case[2].calls[-1][2]] == [case[-1]]
+
+
 def test_same_topic_other_group_creates_its_own_event_without_old_context(tmp_path):
     case = setup(tmp_path)
     msg = message("other", 2, conversation_id="synthetic-separate-group")
@@ -280,3 +294,51 @@ def test_initial_conflict_parser_keeps_actual_model_suggestion(tmp_path):
     assert notes[-1]['reason']=='initial_action_conflict_requires_review'
     with pytest.raises(ContractError,match='新建只记录'):
         parse_attribution_output(model_output(msg,changes=facts),[msg],[],[])
+
+
+def test_uncertain_recovery_action_only_blocks_conflicting_matter(tmp_path):
+    case = setup(tmp_path)
+    service, store, provider, source, old, event_id = case
+    original = deepcopy(store.events[event_id])
+    conflict = message('uncertain-action', 2, '虚构报告故障仍需核对恢复情况')
+    independent = message('independent', 2, '虚构新资源需要开通')
+    source.messages.extend([conflict, independent])
+    provider.mapping[conflict.message_id] = candidate(conflict, 'update', event_id, [old],
+        changes=[change(conflict)], continuity=dict(kind='uncertain', previous_event_id=event_id,
+            evidence=[dict(message_id=conflict.key, quote=conflict.content)]))
+    provider.mapping[independent.message_id] = candidate(independent, changes=[change(independent)])
+    result = service.run_window(UID, window(2))
+    assert result.processed == 2 and len(result.created) == len(result.review) == 1
+    assert not result.updated and store.events[event_id] == original
+    record = store.attributions[(conflict.key, service.stream)]['records'][0]
+    assert record['requested_action'] == 'update' and record['action'] == 'review'
+
+
+def test_continuity_action_conflict_never_hides_fabricated_direct_quote():
+    from dake.analysis.continuity import validate_continuity, ContinuityActionConflict
+    msg = message('invalid-continuity', 2)
+    proposal = candidate(msg, 'update', 'synthetic-old', changes=[change(msg)],
+        continuity=dict(kind='uncertain', previous_event_id=None,
+            evidence=[dict(message_id=msg.key, quote='原文中不存在的虚构引文')]))
+    with pytest.raises(ContractError) as error:
+        validate_continuity(proposal, {msg.key: msg}, {msg.key})
+    assert not isinstance(error.value, ContinuityActionConflict)
+
+
+def test_parser_preserves_conflicting_suggestion_only_in_explicit_group_mode(tmp_path):
+    from dake.analysis.attribution import parse_attribution_output
+    from dake.analysis.continuity import ContinuityActionConflict
+    case = setup(tmp_path)
+    old, event_id = case[4:]
+    msg = message('conflicting-model', 2, '虚构报告仍有故障，恢复情况不明')
+    raw = model_output(msg, decision='update', referenced_event_id=event_id,
+        basis=[dict(message_id=m.key, quote=m.content) for m in (msg, old)],
+        continuity=dict(kind='uncertain', previous_event_id=event_id,
+            evidence=[dict(message_id=msg.key, quote=msg.content)]))
+    with pytest.raises(ContinuityActionConflict):
+        parse_attribution_output(raw, [msg], [old], [case[1].events[event_id]])
+    notes = []
+    parsed = parse_attribution_output(raw, [msg], [old], [case[1].events[event_id]],
+        review_continuity_conflicts=True, normalizations=notes)
+    assert parsed[0].decision == 'update' and parsed[0].continuity['previous_event_id'] == event_id
+    assert notes[-1]['reason'] == 'continuity_action_conflict_requires_review'

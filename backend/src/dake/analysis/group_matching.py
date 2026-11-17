@@ -6,6 +6,7 @@ import hashlib
 from .references import EVENT_REFERENCE as _EVENT_REF, MESSAGE_REFERENCE as _MESSAGE_REF
 from .contract import ContractError
 from .summary_changes import validate_changes, InitialActionConflict
+from .continuity import validate_continuity, ContinuityActionConflict
 
 
 MATCH_FIELDS = ("产品", "资源标识", "操作", "环境")
@@ -17,13 +18,21 @@ history_retrieval.scope=conversation 时，只处理这个群的事项，跨群�
 显式 event_id 或完整 message_id 是程序可核验的引用；同产品、同资源、同群或时间相近都不证明同一事项。
 仅重复旧事实时返回 duplicate，业务结果归为非业务/无需推进，不更新事件。
 关键词零命中不证明独立新建；检索不完整或引用无法定位时返回 review。
+new 表示首次纳入本系统跟进，不表示问题刚刚发生。首次接入时，若本群历史已完整检查、没有可关联旧事件，
+当前消息已明确产品或问题及需要跟进的事实，可按当前可核验事实 new；“昨天也有”“仍然失败”本身不要求 review。
+不能因为系统尚无历史事件而让所有首批事项永久待确认；不补写未提供的发生时间、原因或历史结论。
+只有指代本身无法理解、确有未决旧候选、检索不完整或明确引用无法定位时才因归属不清 review。
+本群候选中标记 conversation_candidate 的记录是供语义判断的旧事项，不能只因无共同关键词就排除；
+请结合已提供的新旧消息核对对象和事实。clues_limited 只表示关键词预算，是否存在检索缺口以 incomplete 为准。
+首次记录包含已采取措施或当前恢复说法时，只记录所见事实；没有可核验旧事件不需要虚构恢复关联或连续性对象。
 新建建议与更正或替换旧摘要动作冲突时，程序核验直接依据后降为待确认，合法事项继续处理。
+恢复边界与归属动作冲突时，同样先核验全部直接证据，再仅将该事项降为待确认；不猜测恢复或复发。
 """
 
 
 def group_matching_version():
     """冻结本群程序规则及模型补充约定，代码规则变化时同步递增版本。"""
-    return "conversation-matching-v1-" + hashlib.sha256(GROUP_POLICY.encode()).hexdigest()[:16]
+    return "conversation-matching-v2-" + hashlib.sha256(GROUP_POLICY.encode()).hexdigest()[:16]
 
 
 def constrain(candidate, *, retrieval, available, eligible):
@@ -55,6 +64,10 @@ def constrain(candidate, *, retrieval, available, eligible):
         ids.update(matches)
     target = next(iter(ids)) if len(ids) == 1 and not unresolved else None
     reason = None
+    try:
+        validate_continuity(candidate, available, human)
+    except ContinuityActionConflict:
+        reason = "恢复关系与归属动作冲突，本事项待确认，不修改旧事件"
     if candidate.decision == "new":
         try:
             validate_changes(candidate, available, human)

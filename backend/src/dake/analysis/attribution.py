@@ -9,7 +9,7 @@ from pydantic import Field
 from ..domain.models import parse_time
 from .contract import ContractError, ExtractedCandidate, StrictObject, parse_output
 from .summary_changes import SUMMARY_POLICY, SummaryChange, validate_changes, complete_field_changes, InitialActionConflict
-from .continuity import CONTINUITY_POLICY, ContinuityFact, recovery_is_safe, validate_continuity, normalize_uncertain_reference
+from .continuity import CONTINUITY_POLICY, ContinuityFact, recovery_is_safe, validate_continuity, normalize_uncertain_reference, ContinuityActionConflict
 from .validation import evidence_map
 from .quote_alignment import align_quotes
 
@@ -71,7 +71,7 @@ def attribution_version():
 
 
 def parse_attribution_output(content, new_messages, context, existing_events, *, normalizations=None, history_items=(),
-                             review_initial_conflicts=False):
+                             review_initial_conflicts=False, review_continuity_conflicts=False):
     """沿用字段及来源校验；关联依据在业务入口按当前窗口再次核对。"""
     content = align_quotes(content, [*context, *new_messages])
     available = evidence_map([*context, *new_messages])
@@ -114,7 +114,14 @@ def parse_attribution_output(content, new_messages, context, existing_events, *,
                     reason="initial_action_conflict_requires_review"))
         except ContractError as error:
             raise ContractError(f"candidates[{candidate_index}]：{error}") from None
-        validate_continuity(candidate, available, {m.key for m in new_messages})
+        try:
+            validate_continuity(candidate, available, {m.key for m in new_messages})
+        except ContinuityActionConflict:
+            if not review_continuity_conflicts:
+                raise
+            if normalizations is not None:
+                normalizations.append(dict(candidate_index=candidate_index, field="continuity",
+                    reason="continuity_action_conflict_requires_review"))
         for basis_index, ref in enumerate(candidate.basis):
             # 已提供原文的错引应进入 Provider 原有的一次纠正；历史片段仍由归属入口核对。
             try:

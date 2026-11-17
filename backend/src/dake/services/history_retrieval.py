@@ -13,7 +13,7 @@ from ..analysis.group_matching import MATCH_FIELDS
 from ..analysis.references import EVENT_REFERENCE as _EVENT_REF, MESSAGE_REFERENCE as _MESSAGE_REF
 
 
-RETRIEVAL_VERSION = "bounded-keywords-v1"
+RETRIEVAL_VERSION = "bounded-keywords-v3"
 HISTORY_POLICY = """
 历史候选是只读背景，不是新增消息或归属决定。零命中不证明应该 new，多命中不代表应该 merge。
 hit_reasons 是检索线索，不是已确认事实；evidence_ids 只是历史引用，未提供原文的 ID 不得用作本轮证据。
@@ -43,10 +43,10 @@ def _clues(messages, limits):
                 break
         if len(keywords) > limits.keyword_limit:
             break
-    limited = (len(event_ids) > limits.exact_limit or len(message_ids) > limits.exact_limit
-               or len(keywords) > limits.keyword_limit)
+    reference_limited = len(event_ids) > limits.exact_limit or len(message_ids) > limits.exact_limit
+    limited = reference_limited or len(keywords) > limits.keyword_limit
     return (event_ids[:limits.exact_limit], message_ids[:limits.exact_limit],
-            list(keywords)[:limits.keyword_limit], limited)
+            list(keywords)[:limits.keyword_limit], limited, reference_limited)
 
 
 @dataclass(frozen=True)
@@ -91,6 +91,7 @@ class HistoryRetrievalResult:
     snapshot_unavailable: int = 0
     scan_limited: bool = False
     clues_limited: bool = False
+    reference_limited: bool = False
     context_limited: bool = False
     context_chars: int = 2
     conversation: tuple[str, str] | None = None
@@ -113,7 +114,10 @@ class HistoryRetrievalResult:
                     snapshot_unavailable=self.snapshot_unavailable, scan_limited=self.scan_limited,
                     clues_limited=self.clues_limited, context_limited=self.context_limited,
                     context_chars=self.context_chars,
-                    incomplete=bool(self.exact_limited or self.index_incomplete or self.scan_limited or self.clues_limited or self.context_limited
+                    reference_limited=self.reference_limited,
+                    incomplete=bool(self.exact_limited or self.index_incomplete or self.scan_limited
+                                    or self.reference_limited
+                                    or (self.clues_limited and self.conversation is None and self.scanned > 0) or self.context_limited
                                     or self.unsafe_skipped or self.snapshot_unavailable
                                     or any(c.evidence_limited for c in self.candidates)))
 
@@ -139,7 +143,7 @@ class HistoryRetriever:
         scope = dict(conversation=conversation) if conversation else {}
         if not messages:
             return result
-        event_refs, message_refs, keywords, result.clues_limited = _clues(messages, self.limits)
+        event_refs, message_refs, keywords, result.clues_limited, result.reference_limited = _clues(messages, self.limits)
         recent_start = before - timedelta(days=self.limits.recent_days)
         matches, seen = [], set()
 
@@ -198,10 +202,13 @@ class HistoryRetriever:
                 hits = [word for word in keywords if word in text]
                 exact_event = event.event_id in event_refs
                 exact_message = any(key in evidence_ids for key in message_refs)
-                if not (exact_event or exact_message or hits):
+                # 本群模式保留预算内的语义候选，不能让“仍然慢”等短指代被词法零命中挡掉。
+                if not (exact_event or exact_message or hits) and conversation is None:
                     continue
                 reasons = (["exact_event_id"] if exact_event else []) + (["exact_message_key"] if exact_message else [])
                 reasons += ["keyword:" + word for word in hits]
+                if not (exact_event or exact_message or hits):
+                    reasons.append("conversation_candidate")
                 reasons.append("recent" if event.end_time >= recent_start else "older")
                 # 关闭与未关闭只影响候选排序，不在这里认定恢复、持续或复发。
                 rank = (-int(exact_event), -int(exact_message), event.end_time < recent_start,

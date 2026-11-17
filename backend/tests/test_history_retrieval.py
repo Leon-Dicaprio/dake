@@ -298,6 +298,15 @@ def test_keyword_cap_is_explicit_and_does_not_claim_full_recall():
     assert result.clues_limited and result.metadata()["incomplete"] and not result.candidates
 
 
+def test_empty_history_with_many_keywords_is_complete_but_truncated_references_are_not():
+    limits = HistoryRetrievalSettings(keyword_limit=1, exact_limit=1)
+    result = retrieve(ObservedStore(), message(content="橙鹿票据 星舟网关 长篇明确诉求"), limits)
+    assert result.clues_limited and result.scanned == 0
+    assert not result.metadata()["incomplete"]
+    explicit = retrieve(ObservedStore(), message(content=f"event_id={str(UUID(int=1))} event_id={str(UUID(int=2))}"), limits)
+    assert explicit.reference_limited and explicit.metadata()["incomplete"]
+
+
 @pytest.mark.parametrize("old_text,new_text,hit", [
     ("星舟网关连接超时", "星舟网关仍然超时", True),
     ("卡死", "无响应", False),
