@@ -29,7 +29,7 @@ def parser() -> argparse.ArgumentParser:
     actions.add_parser("status", help="查询数据库中的真实进度和暂停原因")
     actions.add_parser("run", help="运行单实例定时编排及既有任务执行器")
     for action in ("pause", "resume"):
-        actions.add_parser(action, help="暂停或显式恢复客户调度").add_argument("--id", required=True)
+        actions.add_parser(action, help="暂停或显式恢复自动任务").add_argument("--id", required=True)
     for name, help_text in (
         ("fetch", "取数、适配并保存消息，不做分析"),
         ("process", "按配置或水位执行一个周期"),
@@ -69,33 +69,43 @@ def main(argv=None) -> int:
     try:
         settings = Settings.load(args.env_file)
         if args.command == "schedule":
-            from .services.scheduling import SchedulingService
-            from .jobs.runner import RunRunner
-            from .repositories.runs import RunRepository
-            scheduling = SchedulingService(settings)
+            from .api.app_factory import create_app
+            application = create_app(settings, start_worker=False)
+            services = application.state.services
+            tasks, runner = services.tasks, services.runner
             if args.action == "start":
-                result = scheduling.configure(args.start)
+                existing = next((task for task in tasks.tasks.list() if task["config"]["name"] == "定时增量（CLI）"), None)
+                if existing:
+                    if bound(existing["config"]["start"]) != bound(args.start):
+                        raise ValueError("已有定时任务起点不同，不能重置其进度")
+                    result = existing
+                else:
+                    task = tasks.create(dict(name="定时增量（CLI）", mode="automatic", start_mode="specified",
+                        start=args.start, interval="15m", retries=3, retry_delay="1m"))
+                    result = tasks.action(task["task_id"], "resume")
             elif args.action == "tick":
-                result = dict(enqueued=scheduling.tick())
-            elif args.action == "status":
-                result = scheduling.status()
-            elif args.action in {"pause", "resume"}:
-                result = scheduling.control_customer(args.id, args.action)
-            else:
-                repository = RunRepository(settings)
-                runner = RunRunner(settings, repository)
-                runner.start()
-                print("定时增量运行中；客户轮转、进度及有限重试均保存到本地 MySQL。")
-                try:
-                    while True:
+                with services.runs.connection() as keeper:
+                    rows, _ = keeper._execute("SELECT GET_LOCK(%s,0) AS ok", (services.runs.worker_lock,))
+                    if rows and rows[0]["ok"] == 1:
                         try:
-                            scheduling.tick()
-                            runner.notify()
-                        except StorageError:
-                            print("本轮定时编排未完成，数据库进度已保留；稍后继续检查。", file=sys.stderr)
-                        # 独立编排不依赖执行锁；API 已持有执行锁时仍可正常提交任务。
-                        threading.Event().wait(settings.schedule_poll_seconds)
+                            tasks.tick(force=True)
+                        finally:
+                            keeper._execute("SELECT RELEASE_LOCK(%s)", (services.runs.worker_lock,))
+                result = dict(tasks=tasks.tasks.list())
+            elif args.action == "status":
+                result = dict(tasks=services.tasks.tasks.list())
+            elif args.action in {"pause", "resume"}:
+                result = tasks.action(args.id, args.action)
+            else:
+                services.runs.init_schema()
+                tasks.tasks.init_schema()
+                runner.start()
+                print("任务中心定时增量运行中；客户独立推进，进度与执行权保存在 MySQL。")
+                try:
+                    threading.Event().wait()
                 except KeyboardInterrupt:
+                    pass
+                finally:
                     runner.stop()
                 return 0
             print(json.dumps(result, ensure_ascii=False, indent=2))

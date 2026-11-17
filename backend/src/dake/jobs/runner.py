@@ -1,20 +1,20 @@
 """本地持久任务执行器：单工作线程、跨进程执行锁、逐周期保存可见进度。"""
 
+from contextlib import contextmanager
 from dataclasses import asdict, replace
 from datetime import timedelta
 import math
+import logging
 import threading
-from time import monotonic
 from uuid import uuid4
 
 from ..bootstrap import build_service
 from ..analysis.providers.xhub import XHubError, XHubTransientError, configured_stream
-from ..ingestion.client import TransientChatRecordsError
 from ..analysis.attribution import attribution_version
 from ..analysis.group_matching import group_matching_version
 from ..config import API_MAX_RANGE_DAYS, API_MAX_WINDOWS, HistoryContextSettings, HistoryRetrievalSettings, bound, duration
 from ..domain.models import parse_time, windows
-from ..ingestion.client import validate_uid
+from ..ingestion.client import validate_uid, TransientChatRecordsError
 from ..repositories.attempts import AttemptError, AttemptPendingVerification, DeliveryError
 from ..services.queries import duration_label
 from ..services.replay import ReplayService
@@ -69,7 +69,6 @@ def prepare_request(settings, values: dict) -> tuple[dict, int]:
                 llm_timeout_seconds=settings.llm_timeout_seconds if settings.provider == "xhub" else None,
                 analysis_stream=configured_stream(settings)), total
 
-
 def restore_settings(settings, request):
     """从已冻结请求还原执行配置；旧策略须显式迁移，不能补用当前缺省。"""
     if request["mode"] != "official":
@@ -77,9 +76,8 @@ def restore_settings(settings, request):
     if request.get("group_matching_version") != group_matching_version():
         raise XHubError("本群归属策略已变化，请重新提交任务")
     frozen = replace(settings, uid=request["uid"],
-        start=parse_time(request.get("business_start", request["start"])),
+        start=parse_time(request.get("data_start", request.get("business_start", request["start"]))),
         end=parse_time(request["end"]), interval=duration(request["interval"]),
-        chat_retries=0 if request.get("schedule_id") else settings.chat_retries,
         group_batch_chars=request["group_batch_chars"], provider=request["provider"],
         llm_model=request["llm_model"] or settings.llm_model,
         llm_max_tokens=request["llm_max_tokens"] or settings.llm_max_tokens,
@@ -98,9 +96,10 @@ def restore_settings(settings, request):
 
 
 class RunRunner:
-    """任务始终串行处理；只有拥有 MySQL 命名锁的实例可以恢复和领取任务。"""
+    """协调器只编排持久工作；分析工人按名额并行，不再等整轮客户都结束。"""
 
-    def __init__(self, settings, repository, *, service_factory=build_service, poll_interval=0.25):
+    def __init__(self, settings, repository, *, service_factory=build_service, poll_interval=0.25, customer_factory=None):
+        self.customer_factory = customer_factory
         self.settings = settings
         self.repository = repository
         self.service_factory = service_factory
@@ -110,27 +109,39 @@ class RunRunner:
         self._wake = threading.Event()
         self._thread = None
         self._keeper = None
-        self.scheduler = None
-        self._schedule_tick = 0
+        self.coordinator = None
+        self.pipeline = None
+        self.attempts = None
+        self._workers = []
 
     def start(self):
-        """启动一个本地工作线程；数据库执行锁防止多 API 实例重复工作。"""
+        """协调线程只负责编排；抓取和分析各自领取持久工作。"""
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
-        self._thread = threading.Thread(target=self._loop, name="dake-runner", daemon=True)
+        self._thread = threading.Thread(target=self._coordinate, name="dake-coordinator", daemon=True)
         self._thread.start()
+        slots = max(1, int(getattr(self.settings, "analysis_slots", 2)))
+        self._workers = []
+        for index in range(slots):
+            thread = threading.Thread(target=self._consume, args=(False,), name=f"dake-analysis-{index}", daemon=True)
+            thread.start()
+            self._workers.append(thread)
+        fetch = threading.Thread(target=self._consume, args=(True,), name="dake-fetch", daemon=True)
+        fetch.start()
+        self._workers.append(fetch)
 
     def notify(self):
         """提交后唤醒本实例，其他实例提交的任务由短轮询发现。"""
         self._wake.set()
 
     def stop(self):
-        """在当前周期完成后停止，不中断数据库事务；下一次启动会标记异常中断。"""
+        """当前窗口提交后停止；不把仍在运行的窗口批量改成失败。"""
         self._stop.set()
         self._wake.set()
-        if self._thread:
-            self._thread.join(timeout=5)
+        for thread in [self._thread, *self._workers]:
+            if thread is not None:
+                thread.join(timeout=5)
 
     def _wait(self):
         self._wake.wait(self.poll_interval)
@@ -142,70 +153,150 @@ class RunRunner:
         rows, _ = self._keeper._execute("SELECT IS_USED_LOCK(%s)=CONNECTION_ID() AS ok", (self.repository.worker_lock,))
         return bool(rows and rows[0]["ok"] == 1)
 
-    def _loop(self):
+    def _coordinate(self):
+        """编排锁只包住调度和租约核实，不包住模型或客户分析。"""
         while not self._stop.is_set():
             try:
                 with self.repository.connection() as keeper:
                     rows, _ = keeper._execute("SELECT GET_LOCK(%s,0) AS ok", (self.repository.worker_lock,))
-                    if not rows or rows[0]["ok"] != 1:
-                        self._wait()
-                        continue
-                    self._keeper = keeper
-                    # 只有新取得执行锁的实例恢复中断，旁观实例不触碰别人的 running。
-                    self.repository.recover_interrupted()
-                    while not self._stop.is_set() and self._leader_alive():
-                        if self.scheduler is not None and monotonic() >= self._schedule_tick:
-                            self._schedule_tick = monotonic() + self.settings.schedule_poll_seconds
-                            try:
-                                self.scheduler.tick()
-                            except Exception:
-                                # 定时编排失败不吞掉手动队列；页面可从最近触发时间发现停止。
-                                import logging
-                                logging.getLogger(__name__).warning("定时编排未完成，请检查迁移、名单与本地数据库")
-                        run = self.repository.claim_next(self.runner_id)
-                        if run is None:
-                            self._wait()
-                        else:
-                            self.execute(run)
-            except Exception:
-                # 数据库暂时不可达时保留持久状态；重连取得锁后再明确恢复中断。
+                    if rows and rows[0]["ok"] == 1:
+                        self._keeper = keeper
+                        try:
+                            if self.coordinator is not None:
+                                self.coordinator.tick()
+                            if self.pipeline is not None and self.attempts is not None:
+                                self.pipeline.verify_expired(self.attempts)
+                        finally:
+                            keeper._execute("SELECT RELEASE_LOCK(%s)", (self.repository.worker_lock,))
+                            self._keeper = None
+            except Exception as error:
+                from ..repositories.mysql import StorageError
+                logging.getLogger(__name__).error("执行器循环异常：%s %s", type(error).__name__, str(error) if isinstance(error, StorageError) else "")
                 if not self._stop.is_set():
                     self._stop.wait(min(1.0, self.poll_interval * 4))
+            self._wait()
+
+    def _consume(self, source):
+        """空闲名额领取下一份持久工作；退避中的客户不会占着工人。"""
+        while not self._stop.is_set():
+            try:
+                run = self.repository.claim_source(self.runner_id) if source else self.repository.claim_fair(self.runner_id)
+            except Exception as error:
+                from ..repositories.mysql import StorageError
+                logging.getLogger(__name__).error("领取工作异常：%s %s", type(error).__name__, str(error) if isinstance(error, StorageError) else "")
+                self._wait()
+                continue
+            if run is None:
+                self._wait()
+                continue
+            try:
+                self.execute(run)
             finally:
-                self._keeper = None
+                slot = run.get("_capacity_slot")
+                if slot is not None:
+                    try:
+                        self.repository.release_slot(self.runner_id, source=bool(run.get("_capacity_source")), slot=slot)
+                    except Exception as error:
+                        from ..repositories.mysql import StorageError
+                        logging.getLogger(__name__).error("归还名额异常：%s %s", type(error).__name__, str(error) if isinstance(error, StorageError) else "")
+
+    def _start_heartbeat(self, claim):
+        stop = threading.Event()
+
+        def beat():
+            interval = max(1, int(getattr(self.settings, "lease_seconds", 30) / 3))
+            while not stop.wait(interval):
+                try:
+                    self.pipeline.heartbeat(claim["uid"], claim["owner"], claim["epoch"], self.settings.lease_seconds)
+                except Exception:
+                    return
+
+        threading.Thread(target=beat, name="dake-lease", daemon=True).start()
+        return stop.set
+
+    @contextmanager
+    def _bind_window(self, service, request, window):
+        """有执行权时才允许严格窗口提交；失败释放本代次，倒灌则按客户阻断。"""
+        service.strict_window = bool(request.get("strict_window"))
+        service.gate = None
+        claim = None
+        stop = None
+        pipeline = self.pipeline if service.strict_window else None
+        try:
+            if pipeline is not None:
+                from ..services.pipeline import WindowLease
+                target = parse_time(request["catchup_target"]) if request.get("catchup_target") else window.end
+                claim = pipeline.acquire(service.settings.uid, window, self.runner_id, service.stream,
+                    phase=request.get("phase") or "catchup", catchup_target=target,
+                    lease_seconds=getattr(self.settings, "lease_seconds", 30))
+                service.gate = WindowLease(pipeline, claim)
+                stop = self._start_heartbeat(claim)
+            yield
+        except Exception as error:
+            from ..repositories.pipeline import PipelineError
+            if claim is not None:
+                if isinstance(error, PipelineError) and "倒灌" in str(error):
+                    pipeline.block(claim["uid"], claim["owner"], claim["epoch"], "history_blocked", str(error))
+                elif pipeline.blocked(claim["uid"]) is None:
+                    pipeline.release_claim(claim)
+            raise
+        finally:
+            if stop is not None:
+                stop()
+            service.gate = None
+            service.strict_window = False
 
     def execute(self, run):
         """每个任务独占业务连接，通过既有 ReplayService 按配置周期处理。"""
         request = run["request"]
+        if request["mode"] == "customer_sync":
+            return self._execute_customer_sync(run)
         try:
             settings = restore_settings(self.settings, request)
             with self.service_factory(settings, offline=request["offline"]) as service:
                 if service.attempts is None:
                     raise AttemptError("后台任务必须配置执行收据存储")
-                retry_attempts = {0: request["scheduled_retry_of"]} if request.get("scheduled_retry_of") else {}
+                if request.get("message_source") == "stored":
+                    from ..ingestion.stored import ScopedStore, StoredChatSource
+                    scoped = ScopedStore(service.store, request.get("allowed_groups", []))
+                    service.store = scoped
+                    service.ingestion.store = scoped
+                    service.source = service.ingestion.source = StoredChatSource(scoped)
+                    service.history_retriever.store = scoped
+                    service.history_context.store = scoped
+                retry_attempts = {}
                 # 仅使用本任务已持久化的进度；不移动业务起点，也不把文件水位当成提交证明。
                 start_index = run["completed_windows"]
                 if not 0 <= start_index <= run["total_windows"]:
                     raise RunInterrupted()
-                task_start = parse_time(request["start"])
-                results = ReplayService(service).run_range(settings.uid, task_start, settings.end, settings.interval,
+                results = ReplayService(service).run_range(settings.uid, parse_time(request["start"]), settings.end, settings.interval,
                                                           run_id=run["run_id"], retry_attempts=retry_attempts,
                                                           start_index=start_index)
-                for index, window in enumerate(windows(task_start, settings.end, settings.interval)):
-                    if index < start_index:
+                all_windows = list(windows(parse_time(request["start"]), settings.end, settings.interval))
+                stored = request.get("message_source") == "stored"
+                skip_until = start_index
+                recover_range = stored and (bool(run.get("current_window")) or self.repository.has_interrupted_range(
+                    settings.uid, request["start"], request["end"]))
+                for index, window in enumerate(all_windows):
+                    if index < skip_until:
                         continue
                     if self._stop.is_set() or (self._keeper is not None and not self._leader_alive()):
                         raise RunInterrupted()
+                    if stored and not recover_range and not request.get("strict_window"):
+                        from ..services.empty_windows import empty_prefix
+                        with service.store.customer_lock(settings.uid):
+                            empty = empty_prefix(service, settings.uid, all_windows[index:])
+                            if empty:
+                                self.repository.complete_empty_windows(run["run_id"], self.runner_id, index, empty)
+                                skip_until = index + len(empty)
+                                continue
                     window_value = {"start": window.start.isoformat(), "end": window.end.isoformat()}
-                    interrupted = (None if request.get("schedule_id") else
-                                   self.repository.interrupted_window(settings.uid, request["mode"], window_value))
+                    interrupted = self.repository.interrupted_window(settings.uid, request["mode"], window_value)
                     if interrupted:
                         prior = interrupted.get("request", {})
                         if (prior.get("provider", "stub") != request.get("provider", "stub") or
                                 (prior.get("analysis_stream") is not None and
-                                 prior["analysis_stream"] != request.get("analysis_stream")) or
-                                any(prior.get(key) != request.get(key) for key in
-                                    ("attribution_version", "group_matching_version"))):
+                                 prior["analysis_stream"] != request.get("analysis_stream"))):
                             interrupted = None
                     self.repository.begin_window(run["run_id"], self.runner_id, window_value)
                     if interrupted:
@@ -219,7 +310,12 @@ class RunRunner:
                             run["run_id"], index, window)
                         if previous is not None:
                             retry_attempts[index] = previous["attempt_id"]
-                    result = next(results)
+                    with self._bind_window(service, request, window):
+                        if stored:
+                            identity = dict(run_id=run["run_id"], window_index=index, retry_of=retry_attempts.get(index))
+                            result = service.run_window(settings.uid, window, execution=identity)
+                        else:
+                            result = next(results)
                     if self._keeper is not None and not self._leader_alive():
                         raise DeliveryError(f"执行 {result.attempt_id} 的业务已提交，执行权变化导致进度未保存；请恢复展示")
                     payload = compact_progress(result.to_dict())
@@ -239,14 +335,49 @@ class RunRunner:
                 raise RunInterrupted()
             self.repository.finish(run["run_id"], self.runner_id)
         except Exception as error:
-            if request.get("schedule_id"):
-                kind = ("verification" if isinstance(error, AttemptPendingVerification) else
-                        "delivery" if isinstance(error, DeliveryError) else
-                        "transient" if isinstance(error, (TransientChatRecordsError, XHubTransientError)) else
-                        "interrupted" if isinstance(error, RunInterrupted) else "permanent")
-                self.repository.record_failure_kind(run["run_id"], self.runner_id, kind)
+            kind = ("verification" if isinstance(error, AttemptPendingVerification) else
+                    "delivery" if isinstance(error, DeliveryError) else
+                    "transient" if isinstance(error, (TransientChatRecordsError, XHubTransientError)) else
+                    "interrupted" if isinstance(error, RunInterrupted) else "permanent")
+            self.repository.record_failure_kind(run["run_id"], self.runner_id, kind)
+            from ..repositories.mysql import StorageError
+            from ..repositories.pipeline import PipelineError
+            logging.getLogger(__name__).error("客户执行异常：%s %s", type(error).__name__, str(error) if isinstance(error, StorageError) else "")
             message = ("服务已停止，已完成周期保留；可重新提交相同范围"
                        if isinstance(error, RunInterrupted) else
-                       str(error) if isinstance(error, (XHubError, AttemptError)) else
+                       "事务结果未确认，请核实后再重试" if error.__class__.__name__ == "TransactionOutcomeUnknown" else
+                       str(error) if isinstance(error, (XHubError, AttemptError, PipelineError, ValueError)) else
                        "处理失败，已完成周期保留；请检查本地缓存、MySQL 或官方取数网络后重试")
             self.repository.finish(run["run_id"], self.runner_id, error=message)
+
+    def _execute_customer_sync(self, run):
+        """客户同步沿用同一执行锁、领取机制及终态，不装配抽取 Provider。"""
+        from ..services.customers import CustomerSyncService
+
+        def check():
+            if self._stop.is_set() or (self._keeper is not None and not self._leader_alive()):
+                raise RunInterrupted()
+
+        try:
+            service = (self.customer_factory or CustomerSyncService)(self.settings)
+            request = run["request"]
+            if request.get("task_options"):
+                service.task_options = request["task_options"]
+            errors = sum(c.get("profile_errors", 0) + c.get("lookup_errors", 0) for c in run.get("cycles", []))
+            for index, window in enumerate(windows(parse_time(request["start"]), parse_time(request["end"]), duration(request["interval"]))):
+                if index < run["completed_windows"]:
+                    continue
+                check()
+                self.repository.begin_window(run["run_id"], self.runner_id,
+                    {"start": window.start.isoformat(), "end": window.end.isoformat()})
+                cycle = service.sync_window(window, run["run_id"], self.runner_id, index, check)
+                errors += cycle["profile_errors"] + cycle["lookup_errors"]
+                if self.pipeline is not None:
+                    self.pipeline.publish_source(window, message_count=cycle.get("messages", 0),
+                        isolated_count=cycle.get("isolated", 0), complete=True)
+            check()
+            self.repository.finish(run["run_id"], self.runner_id,
+                error="部分资料或群搜索查询失败，已保存有效结果；请查看客户状态后重新同步" if errors else None)
+        except Exception:
+            self.repository.finish(run["run_id"], self.runner_id,
+                error="客户同步未完成，已提交结果保留；请检查接口、数据库和时间范围后重新同步")

@@ -48,16 +48,21 @@ class MemoryAttempts:
     def write_receipt(self, store, uid, stream, attempt_id, receipt):
         store._require(uid)
         assert self.get(uid, stream, attempt_id) is not None
-        store.staged_receipt = (attempt_id, deepcopy(receipt))
+        writable = getattr(store, "store", store)
+        writable.staged_receipt = (attempt_id, deepcopy(receipt))
         if self.fail_receipt:
             raise AttemptError("虚构收据写入失败")
 
-    def failure(self, uid, stream, attempt_id, *, unknown, error_type):
+    def failure(self, uid, stream, attempt_id, *, unknown, error_type, model_unknown=False):
         assert self.get(uid, stream, attempt_id) is not None
+        if unknown and model_unknown:
+            raise AttemptError("同一次失败不能同时是提交不明和模型不明")
         if self.fail_failure:
             raise AttemptError("虚构结束记录失败")
         item = self.items[attempt_id]
-        if unknown or item["receipt"] is None:
+        if model_unknown and item["receipt"] is None:
+            item.update(outcome="model_unknown", error_type=error_type)
+        elif unknown or item["receipt"] is None:
             item.update(outcome="commit_unknown" if unknown else "not_committed", error_type=error_type)
 
     def verified(self, uid, stream, attempt_id, *, committed):

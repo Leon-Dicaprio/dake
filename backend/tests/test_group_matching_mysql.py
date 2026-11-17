@@ -78,7 +78,7 @@ def test_migration_backfill_uses_only_same_digest_messages(case, changed):
         if changed:
             case.service.store.upsert_messages([replace(case.first, conversation_id="synthetic-edited-room")])
         case.service.store._execute("DELETE FROM event_group_links WHERE uid=%s", (case.uid,))
-        statement = (ROOT / "backend/migrations/004_event_group_links.sql").read_text().split(";")[-2]
+        statement = (ROOT / "backend/migrations/006_event_group_links.sql").read_text().split(";")[-2]
         case.service.store._execute(statement + " WHERE e.uid=%s", (case.uid,))
     rows, _ = case.service.store._execute("SELECT conversation_id FROM event_group_links WHERE event_id=%s", (event_id,))
     assert rows[0]["conversation_id"] == ("" if changed else case.first.conversation_id)

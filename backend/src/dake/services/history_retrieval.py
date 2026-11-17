@@ -128,7 +128,7 @@ class HistoryRetriever:
     def __init__(self, store, limits: HistoryRetrievalSettings):
         self.store, self.limits = store, limits
 
-    def retrieve(self, uid: str, stream: str, messages: list[Message], before: datetime, *, conversation=None):
+    def retrieve(self, uid: str, stream: str, messages: list[Message], before: datetime, *, conversation=None, staged_events=()):
         """由增量服务在现有客户事务内调用，只使用本批可分析消息生成线索。"""
         if not uid or not stream or before.tzinfo is None:
             raise ValueError("历史检索必须有客户、分析流及带时区的上界")
@@ -143,6 +143,8 @@ class HistoryRetriever:
         result.conversation = conversation
         result.index_incomplete = self.store.group_index_incomplete(uid, stream)
         scope = dict(conversation=conversation)
+        staged = {e.event_id: e for e in staged_events if (e.uid, e.stream) == (uid, stream)
+                  and any((r["source"], r.get("conversation_id")) == conversation for r in e.evidence)}
         event_refs, message_refs, keywords, result.clues_limited, result.reference_limited = _clues(messages, self.limits)
         recent_start = before - timedelta(days=self.limits.recent_days)
         matches, seen = [], set()
@@ -163,8 +165,16 @@ class HistoryRetriever:
                     safe.append(head)
                 else:
                     result.unsafe_skipped += 1
-            snapshots = self.store.history_event_snapshots(uid, stream, safe) if safe else []
-            group_keys = self.store.group_evidence_keys(uid, stream, [e.event_id for e in snapshots], conversation)
+            persisted = [head for head in safe if head["event_id"] not in staged]
+            snapshots = self.store.history_event_snapshots(uid, stream, persisted) if persisted else []
+            snapshots += [Event.from_dict(deepcopy(staged[head["event_id"]].updated_by[-1]["snapshot"]))
+                          for head in safe if head["event_id"] in staged]
+            group_keys = self.store.group_evidence_keys(uid, stream, [e.event_id for e in snapshots if e.event_id not in staged], conversation)
+            for event in snapshots:
+                if event.event_id in staged:
+                    group_keys[event.event_id] = {(r["source"], r["message_id"], r.get("digest") or "")
+                        for r in staged[event.event_id].evidence
+                        if (r["source"], r.get("conversation_id")) == conversation}
             result.snapshot_unavailable += len(safe) - len(snapshots)
             by_id = {head["event_id"]: head for head in safe}
             for event in snapshots:
@@ -236,6 +246,10 @@ class HistoryRetriever:
                 matches.append((rank, HistoryCandidate(event, tuple(reasons), tuple(selected_ids),
                                                        len(evidence_ids) > len(selected_ids), evidence_refs)))
 
+        if staged:
+            consume([dict(event_id=e.event_id, end_time=e.end_time,
+                          revision_ends=[r["window_end"] for r in e.updated_by])
+                     for e in sorted(staged.values(), key=lambda e: (e.end_time, e.event_id), reverse=True)])
         if event_refs:
             consume(self.store.history_event_heads(uid, stream, before, limit=self.limits.exact_limit,
                                                    event_ids=event_refs, **scope))

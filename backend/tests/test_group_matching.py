@@ -329,3 +329,25 @@ def test_parser_preserves_conflicting_suggestion_for_program_review(tmp_path):
         normalizations=notes)
     assert parsed[0].decision == 'update' and parsed[0].continuity['previous_event_id'] == event_id
     assert notes[-1]['reason'] == 'continuity_action_conflict_requires_review'
+
+
+def test_later_batch_can_update_staged_event_without_open_business_transaction(tmp_path):
+    first = message("staged-first", 1, "虚构上传故障首次出现，" + "甲" * 900)
+    second = message("staged-next", 1, "虚构同一上传故障继续排查，" + "乙" * 900)
+    service, store, provider, _ = build(tmp_path, [first, second])
+    service.settings = replace(service.settings, group_batch_chars=1024)
+    observations = []
+    def opening(new, context, events):
+        observations.append((store._uid, len(store.events)))
+        return candidate(first, changes=[change(first)])
+    def progress(new, context, events):
+        observations.append((store._uid, len(store.events)))
+        assert len(events) == 1
+        return candidate(second, "update", events[0].event_id, [first], changes=[change(second)])
+    provider.mapping.update({first.message_id: opening, second.message_id: progress})
+    result = service.run_window(UID, window(1))
+    assert observations == [(None, 0), (None, 0)]
+    assert len(result.created) == len(store.events) == 1
+    event = store.events[result.created[0]]
+    assert len(event.updated_by) == 2
+    assert {r["message_id"] for r in event.evidence} == {first.message_id, second.message_id}

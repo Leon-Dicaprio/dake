@@ -23,8 +23,6 @@ API_MAX_RANGE_DAYS = 31
 API_MAX_WINDOWS = 2048
 API_MAX_PENDING_RUNS = 32
 API_RUN_LIST_LIMIT = 200
-SCHEDULE_INTERVAL = timedelta(minutes=15)
-SCHEDULE_RETRY_DELAYS = (60, 300, 900)
 
 
 def duration(value: str) -> timedelta:
@@ -84,10 +82,6 @@ class HistoryContextSettings:
 class Settings:
     """依赖注入的运行配置；密码不参与对象文本表示，避免调试时意外输出。"""
     mysql_host: str = "127.0.0.1"
-    schedule_enabled: bool = False
-    schedule_poll_seconds: int = 5
-    schedule_retry_delays: tuple[int, ...] = SCHEDULE_RETRY_DELAYS
-    chat_retries: int = 2
     mysql_port: int = 3307
     mysql_database: str = "dake_aftersales"
     mysql_user: str = "dake"
@@ -110,6 +104,10 @@ class Settings:
     llm_model: str = "gpt-6.1-sol"
     llm_max_tokens: int = 8192
     llm_timeout_seconds: int = 120
+    analysis_slots: int = 2
+    live_reserved: int = 1
+    lease_seconds: int = 30
+    fetch_ahead: int = 2
     # 待确认：合理的本地缺省，不代表官方状态/等级标准。
     default_status: str = UNKNOWN
     default_severity: str = UNKNOWN
@@ -126,9 +124,6 @@ class Settings:
             data_dir = PROJECT_ROOT / data_dir
         result = cls(
             group_batch_chars=int(get("GROUP_BATCH_CHARS", "16000")),
-            schedule_enabled=get("SCHEDULE_ENABLED", "0") == "1",
-            schedule_poll_seconds=int(get("SCHEDULE_POLL_SECONDS", "5")),
-            schedule_retry_delays=tuple(int(v.strip()) for v in get("SCHEDULE_RETRY_DELAYS_SECONDS", ",".join(map(str, SCHEDULE_RETRY_DELAYS))).split(",")),
             mysql_host=get("MYSQL_HOST", "127.0.0.1"),
             mysql_port=int(get("MYSQL_PORT", "3307")),
             mysql_database=get("MYSQL_DATABASE", "dake_aftersales"),
@@ -158,6 +153,10 @@ class Settings:
             llm_model=get("XHub_MODEL", "gpt-6.1-sol"),
             llm_max_tokens=int(get("XHub_MAX_TOKENS", "8192")),
             llm_timeout_seconds=int(get("XHub_TIMEOUT_SECONDS", "120")),
+            analysis_slots=int(get("ANALYSIS_SLOTS", "2")),
+            live_reserved=int(get("LIVE_RESERVED", "1")),
+            lease_seconds=int(get("LEASE_SECONDS", "30")),
+            fetch_ahead=int(get("FETCH_AHEAD", "2")),
             default_status=get("DEFAULT_STATUS", UNKNOWN),
             default_severity=get("DEFAULT_SEVERITY", UNKNOWN),
             closed_statuses=tuple(s.strip() for s in get("CLOSED_STATUSES", "").split(",") if s.strip()),
@@ -177,17 +176,16 @@ class Settings:
             raise ValueError("API_ALLOWED_HOSTS 须填写明确的本机地址或域名")
         if not self.data_dir.resolve().is_relative_to((PROJECT_ROOT / "data").resolve()):
             raise ValueError("DATA_DIR 必须位于本项目 data/ 目录下")
-        if self.provider not in {"stub", "xhub"}:
-            raise ValueError("LLM_PROVIDER 仅支持 stub 或 xhub")
         if not 1024 <= self.group_batch_chars <= 64000:
             raise ValueError("同群新增消息字符预算须在 1024 至 64000 之间")
+        if self.provider not in {"stub", "xhub"}:
+            raise ValueError("LLM_PROVIDER 仅支持 stub 或 xhub")
         if not self.llm_model or not 1 <= self.llm_max_tokens <= 8192 or not 1 <= self.llm_timeout_seconds <= 300:
             raise ValueError("模型名称、输出上限或超时配置无效")
-        if type(self.chat_retries) is not int or not 0 <= self.chat_retries <= 3:
-            raise ValueError("取数内部重试次数无效")
-        if (self.schedule_poll_seconds < 1 or len(self.schedule_retry_delays) != 3
-                or any(type(v) is not int or not 1 <= v <= 86400 for v in self.schedule_retry_delays)):
-            raise ValueError("定时检查间隔须为正数，重试须明确配置三个正整数秒")
+        if self.analysis_slots < 1 or not 0 <= self.live_reserved <= self.analysis_slots or self.fetch_ahead < 1:
+            raise ValueError("分析并发额度不合法")
+        if not 1 <= self.lease_seconds <= 3600:
+            raise ValueError("执行租约时长不合法")
 
     def store_kwargs(self) -> dict:
         """将数据库配置交给存储组件；调用方不得记录返回的凭据。"""

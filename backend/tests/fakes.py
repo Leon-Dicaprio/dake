@@ -107,6 +107,14 @@ class MemoryStore:
     def events_by_ids(self, uid, stream, event_ids):
         return [deepcopy(e) for e in self.events.values() if e.event_id in event_ids and (e.uid, e.stream) == (uid, stream)]
 
+    def event_revision_heads(self, uid, stream):
+        return {e.event_id: [r["window_end"] for r in e.updated_by]
+                for e in self.events.values() if (e.uid, e.stream) == (uid, stream)}
+
+    def revised_message_keys(self, uid, stream, start, end):
+        return {m.key for m in self.context_messages(uid, start, end)
+                if (m.key, stream) in self.processed and self.processed[(m.key, stream)] != m.digest}
+
     def has_future_event_revision(self, uid, stream, before):
         from dake.domain.models import parse_time
         return any(parse_time(r["window_end"]) > before for e in self.events.values()
@@ -180,6 +188,17 @@ class FakeSource:
     def __init__(self, messages=()):
         self.messages = list(messages)
         self.calls = []
+
+    def load_window(self, uid, start, end):
+        """保留按日假来源以覆盖旧回放，同时实现统一窗口协议。"""
+        from datetime import timedelta
+
+        day = start.date()
+        messages = []
+        while day <= (end - timedelta(microseconds=1)).date():
+            messages.extend(m for m in self.load_day(uid, day) if start <= m.sent_at < end)
+            day += timedelta(days=1)
+        return messages
 
     def load_day(self, uid, day):
         self.calls.append((uid, day))

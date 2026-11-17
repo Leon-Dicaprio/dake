@@ -15,7 +15,7 @@ def parser():
     result.add_argument("--database", required=True)
     result.add_argument("--user", required=True)
     result.add_argument("--password-file", required=True)
-    result.add_argument("--suite", choices=("executions", "panel", "scheduling", "matching", "all"), default="executions")
+    result.add_argument("--suite", choices=("executions", "panel", "matching", "pipeline", "all"), default="executions")
     result.add_argument("--panel-manifest", help="仅全部测试通过后新建 /tmp 内的虚构面板案例索引，不保存密码或聊天")
     return result
 
@@ -33,7 +33,7 @@ def main(argv=None):
         # 先校验全部非敏感连接参数，再读取明确指定的临时测试密码。
         TestDatabase(args.host, args.port, args.database, args.user, "validation-only")
         if args.panel_manifest:
-            if args.suite in {"executions", "scheduling", "matching"}:
+            if args.suite in {"executions", "matching", "pipeline"}:
                 raise ValueError("导出面板案例必须选择 panel 或 all 验收集合")
             validate_manifest_path(args.panel_manifest, new=True)
         target = TestDatabase(args.host, args.port, args.database, args.user, read_test_password(args.password_file))
@@ -51,10 +51,10 @@ def main(argv=None):
                 files.append(str(root / "backend/tests/test_execution_mysql.py"))
             if args.suite in {"panel", "all"}:
                 files.append(str(root / "backend/tests/test_execution_panel_mysql.py"))
-            if args.suite in {"scheduling", "all"}:
-                files.append(str(root / "backend/tests/test_scheduling_mysql.py"))
             if args.suite in {"matching", "all"}:
                 files.append(str(root / "backend/tests/test_group_matching_mysql.py"))
+            if args.suite in {"executions", "pipeline", "all"}:
+                files.append(str(root / "backend/tests/test_pipeline_mysql.py"))
             plugin = DatabasePlugin(target)
             # 使用本次独立临时目录，避免 pytest 清理其他测试遗留的环境文件而触发隔离保护。
             result = int(pytest.main(["--noconftest", "-p", "no:cacheprovider", "-q", "--tb=short",

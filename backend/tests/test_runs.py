@@ -37,6 +37,9 @@ class MemoryRuns:
         self.items[item["run_id"]] = item
         return deepcopy(item)
 
+    def record_failure_kind(self, run_id, runner_id, kind):
+        self.items[run_id]["request"]["execution_error_kind"] = kind
+
     def claim_next(self, runner_id):
         item = next((item for item in self.items.values() if item["status"] == "queued"), None)
         if item is not None:
