@@ -13,6 +13,44 @@ class APIModel(BaseModel):
     model_config = ConfigDict(extra="ignore", json_schema_serialization_defaults_required=True)
 
 
+class ScheduleStartRequest(APIModel):
+    """只选择初始日期，结束时间随上海时间的完整窗口自动推进。"""
+
+    start_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+class ScheduleResponse(APIModel):
+    """客户级定时状态；与事件状态和单个任务状态分别展示。"""
+
+    schedule_id: str
+    uid: str
+    stream: str
+    enabled: bool
+    status: Literal["active", "paused", "needs_verification"]
+    phase: Literal["disabled", "paused", "needs_verification", "queued", "retry_wait", "catching_up", "waiting"]
+    business_start: str
+    next_start: str
+    active_run_id: str | None
+    last_run_id: str | None
+    retry_count: int
+    retry_at: str | None
+    error: str | None
+    last_success: str | None
+    last_turn: str
+    pending_windows: int
+
+
+class ScheduleListResponse(APIModel):
+    """返回真实进度及名单错误，不触发同步、取数或分析。"""
+
+    configured: bool
+    start_date: str | None
+    last_tick: str | None
+    source_error: str | None
+    worker_enabled: bool
+    items: list[ScheduleResponse]
+
+
 class TimeWindow(APIModel):
     """业务窗口统一使用上海时区的左闭右开时间戳。"""
 

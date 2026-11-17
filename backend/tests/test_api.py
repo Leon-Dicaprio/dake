@@ -120,7 +120,8 @@ def test_openapi_has_named_operations_and_typed_models(api):
     client, _, _, _ = api
     schema = client.get("/openapi.json").json()
     operations = {item["operationId"] for path in schema["paths"].values() for item in path.values()}
-    assert operations == {"health", "get_config", "list_events", "get_event", "get_event_changes", "create_run", "list_runs", "get_run"}
+    assert operations == {"health", "get_config", "list_events", "get_event", "get_event_changes", "create_run", "list_runs", "get_run",
+                          "list_schedules", "start_schedules", "pause_schedule", "resume_schedule"}
     assert {"ConfigResponse", "EventResponse", "EventRevision", "EvidenceResponse", "RunResponse", "CycleResponse"} <= set(schema["components"]["schemas"])
     assert "synthetic-secret-never-return" not in client.get("/api/v1/config").text
 

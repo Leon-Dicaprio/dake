@@ -638,6 +638,10 @@ declare namespace API {
     analysis_stream: string | null;
   };
 
+  type pauseScheduleParams = {
+    schedule_id: string;
+  };
+
   type RecordedAttribution = {
     /** Requested Action */
     requested_action: string | null;
@@ -701,6 +705,10 @@ declare namespace API {
     policy_version: string;
   };
 
+  type resumeScheduleParams = {
+    schedule_id: string;
+  };
+
   type ReviewResponse = {
     /** Review Flag */
     review_flag: string;
@@ -761,6 +769,68 @@ declare namespace API {
     error: string | null;
     /** Cycles */
     cycles: CycleResponse[];
+  };
+
+  type ScheduleListResponse = {
+    /** Configured */
+    configured: boolean;
+    /** Start Date */
+    start_date: string | null;
+    /** Last Tick */
+    last_tick: string | null;
+    /** Source Error */
+    source_error: string | null;
+    /** Worker Enabled */
+    worker_enabled: boolean;
+    /** Items */
+    items: ScheduleResponse[];
+  };
+
+  type ScheduleResponse = {
+    /** Schedule Id */
+    schedule_id: string;
+    /** Uid */
+    uid: string;
+    /** Stream */
+    stream: string;
+    /** Enabled */
+    enabled: boolean;
+    /** Status */
+    status: "active" | "paused" | "needs_verification";
+    /** Phase */
+    phase:
+      | "disabled"
+      | "paused"
+      | "needs_verification"
+      | "queued"
+      | "retry_wait"
+      | "catching_up"
+      | "waiting";
+    /** Business Start */
+    business_start: string;
+    /** Next Start */
+    next_start: string;
+    /** Active Run Id */
+    active_run_id: string | null;
+    /** Last Run Id */
+    last_run_id: string | null;
+    /** Retry Count */
+    retry_count: number;
+    /** Retry At */
+    retry_at: string | null;
+    /** Error */
+    error: string | null;
+    /** Last Success */
+    last_success: string | null;
+    /** Last Turn */
+    last_turn: string;
+    /** Pending Windows */
+    pending_windows: number;
+  };
+
+  type ScheduleStartRequest = {
+    /** Start Date */
+    start_date: string;
   };
 
   type ScopedChangeTask = {

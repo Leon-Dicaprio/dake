@@ -1,6 +1,7 @@
 """从应用容器取得依赖，路由不自行创建共享数据库连接。"""
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from fastapi import Request
 
@@ -8,6 +9,9 @@ from ..config import Settings
 from ..jobs.runner import RunRunner
 from ..repositories.runs import RunRepository
 from ..services.queries import QueryService
+
+if TYPE_CHECKING:
+    from ..services.scheduling import SchedulingService
 
 
 @dataclass
@@ -18,6 +22,7 @@ class AppServices:
     queries: QueryService
     runs: RunRepository
     runner: RunRunner
+    schedules: "SchedulingService | None" = None
 
 
 def services(request: Request) -> AppServices:

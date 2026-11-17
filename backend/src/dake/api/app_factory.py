@@ -11,21 +11,27 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from .dependencies import AppServices
 from .routes.events import router as events_router
 from .routes.runs import router as runs_router
+from .routes.schedules import router as schedules_router
 from .schemas import ErrorResponse, HealthResponse
 from ..config import Settings
 from ..jobs.runner import RunRunner
 from ..repositories.mysql import MySQLStore, StorageError
 from ..repositories.runs import RunConflict, RunRepository
 from ..services.queries import QueryService
+from ..services.scheduling import SchedulingService
+from ..repositories.schedules import ScheduleRepository
 
 
 def create_app(settings: Settings, *, store_factory=MySQLStore, run_repository=None,
                runner=None, query_service=None,
-               start_worker=True) -> FastAPI:
+               start_worker=True, scheduling_service=None) -> FastAPI:
     """创建可测试的应用；仅导出 OpenAPI 时不会连接数据库或启动后台任务。"""
     runs = run_repository or RunRepository(settings, store_factory)
     worker = runner or RunRunner(settings, runs)
     queries = query_service or QueryService(settings, store_factory)
+    schedules = scheduling_service or SchedulingService(settings, repository=ScheduleRepository(settings, store_factory))
+    if settings.schedule_enabled:
+        worker.scheduler = schedules
 
     @asynccontextmanager
     async def lifespan(application):
@@ -41,7 +47,7 @@ def create_app(settings: Settings, *, store_factory=MySQLStore, run_repository=N
     application = FastAPI(title="大客售后事件系统", version="0.2.0", lifespan=lifespan,
                           responses={400: {"model": ErrorResponse}, 409: {"model": ErrorResponse},
                                      422: {"model": ErrorResponse}, 503: {"model": ErrorResponse}})
-    application.state.services = AppServices(settings, queries, runs, worker)
+    application.state.services = AppServices(settings, queries, runs, worker, schedules)
     application.add_middleware(TrustedHostMiddleware, allowed_hosts=list(settings.api_allowed_hosts))
 
     @application.middleware("http")
@@ -100,5 +106,6 @@ def create_app(settings: Settings, *, store_factory=MySQLStore, run_repository=N
 
     application.include_router(events_router)
     application.include_router(runs_router)
+    application.include_router(schedules_router)
 
     return application

@@ -145,7 +145,7 @@ npm run dev
 docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" exec mysql --user="$MYSQL_USER" "$MYSQL_DATABASE"' < backend/migrations/003_processing_schedules.sql
 ```
 
-客户名单接入后，用 `dake schedule start --start YYYY-MM-DD` 选择开始日期，再运行 `dake schedule run` 持续编排和处理；外部定时器也可调用 `dake schedule tick`，由原任务执行器消费队列。默认不调用真实模型、不自动发现客户。网页和 HTTP 配置入口由后续提交接入。
+客户名单接入后，在根 `.env` 设置 `SCHEDULE_ENABLED=1` 并重启后端，从网页“定时增量”选择开始日期。独立运行入口为 `dake schedule run`；外部定时器可调用 `dake schedule tick` 编排到原任务队列。默认不调用真实模型、不自动发现客户。
 
 名单格式、配置参数、命令行操作、恢复边界与独立 MySQL 验收统一见 [定时增量验收说明](docs/定时增量验收说明.md)。真实名单尚待交接，不将本地合成测试等同于真实客户联调。
 

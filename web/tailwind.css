@@ -1,4 +1,14 @@
 @import "tailwindcss";
+
+.schedule-start { display: flex; align-items: end; gap: 16px; margin: 24px 0 12px; flex-wrap: wrap; }
+.schedule-start .form-field { width: 250px; }
+.schedule-help { color: #78716c; font-size: 13px; line-height: 1.7; margin: 12px 0; }
+.schedule-table-scroll { overflow-x: auto; margin-top: 24px; }
+.schedule-table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
+.schedule-table th { color: #78716c; font-weight: 500; padding: 12px; border-bottom: 1px solid #e7e5e4; white-space: nowrap; }
+.schedule-table td { padding: 16px 12px; border-bottom: 1px solid #f0eeea; vertical-align: top; }
+.schedule-table td p { margin: 0 0 4px; }
+.schedule-actions { display: flex; align-items: center; gap: 12px; white-space: nowrap; }
 @source "./src";
 
 @theme {
