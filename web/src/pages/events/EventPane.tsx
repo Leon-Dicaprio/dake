@@ -1,6 +1,9 @@
+import { Crown } from 'lucide-react';
+import { useRef, useState } from 'react';
 import { EventType } from '@/components/EventType';
 import { formatTime } from '@/lib/utils';
 import { ChatMessage } from './ChatMessage';
+import { customerTierBadge } from './CustomerSwitcher';
 import { ExpandableText } from './ExpandableText';
 import {
   conversationLabel,
@@ -8,9 +11,10 @@ import {
   formatClock,
   formatDay,
   messageIdentity,
+  revisionHeadline,
   shanghaiDay,
 } from './eventTitle';
-import { evidenceKey, messageKey } from './revisionEvidence';
+import { evidenceKey, messageKey, revisionEvidence } from './revisionEvidence';
 
 function present(value: string | null | undefined) {
   return value && value !== '未知' ? value : '';
@@ -161,7 +165,29 @@ function sourceLine(platforms: string[], groupCount: number) {
   return parts;
 }
 
-export function EventPane({ event }: { event: API.EventResponse }) {
+export function EventPane({
+  event,
+  customer,
+  isAllCustomers = false,
+  onSelectCustomer,
+}: {
+  event: API.EventResponse;
+  customer?: API.CustomerResponse;
+  isAllCustomers?: boolean;
+  onSelectCustomer?: (uid: string, stream?: string) => void;
+}) {
+  const chat = useRef<HTMLOListElement>(null);
+  const [focused, setFocused] = useState('');
+  const tierBadge = customerTierBadge(customer);
+  function locate(key: string) {
+    const row = Array.from(
+      chat.current?.querySelectorAll<HTMLElement>('[data-evidence-key]') || [],
+    ).find((item) => item.dataset.evidenceKey === key);
+    if (!row) return;
+    setFocused(key);
+    row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    row.focus({ preventScroll: true });
+  }
   const conversations = event.conversations || [];
   const platforms = event.platforms?.length
     ? event.platforms
@@ -187,6 +213,7 @@ export function EventPane({ event }: { event: API.EventResponse }) {
     <>
       <section className="inbox-chat" aria-label="相关聊天">
         <header className="event-chat-header">
+          <p className="pane-eyebrow">原文证据</p>
           <ExpandableText
             as="h2"
             lines={2}
@@ -203,6 +230,7 @@ export function EventPane({ event }: { event: API.EventResponse }) {
           ) : null}
         </header>
         <ol
+          ref={chat}
           className="chat-log inbox-pane-scroll"
           aria-label="聊天记录"
           key={event.event_id}
@@ -237,7 +265,8 @@ export function EventPane({ event }: { event: API.EventResponse }) {
                 key={evidenceKey(item)}
                 data-message-id={item.message_id}
                 data-evidence-key={evidenceKey(item)}
-                className={`chat-row ${identity.side}`}
+                tabIndex={-1}
+                className={`chat-row ${identity.side}${focused === evidenceKey(item) ? ' evidence-focused' : ''}`}
               >
                 <span className="chat-avatar" aria-hidden="true">
                   {identity.avatar}
@@ -258,6 +287,9 @@ export function EventPane({ event }: { event: API.EventResponse }) {
             );
           })}
         </ol>
+        <p className="evidence-footer">
+          按消息时间排序 · 仅展示当前事件关联证据
+        </p>
       </section>
       <aside className="inbox-aside" aria-label="事件详情">
         <h2 className="event-aside-title">事件详情</h2>
@@ -280,6 +312,40 @@ export function EventPane({ event }: { event: API.EventResponse }) {
                 <EventType type={event.type} />
               </dd>
             </div>
+            <div>
+              <dt>事件等级</dt>
+              <dd>{event.severity || '未知'}</dd>
+            </div>
+            <div>
+              <dt>客户 UID</dt>
+              <dd className="aside-customer-value">
+                <span>{event.uid}</span>
+                {tierBadge ? (
+                  <span className={`customer-tier-pill ${tierBadge.kind}`}>
+                    {tierBadge.kind === 'super' && <Crown size={11} />}
+                    {tierBadge.short}
+                  </span>
+                ) : null}
+                {isAllCustomers && onSelectCustomer ? (
+                  <button
+                    type="button"
+                    className="aside-focus-customer"
+                    onClick={() => onSelectCustomer(event.uid, event.stream)}
+                  >
+                    只看该客户
+                  </button>
+                ) : null}
+              </dd>
+            </div>
+            {customer?.tam ? (
+              <div>
+                <dt>客户 TAM</dt>
+                <dd>
+                  {customer.tam}
+                  {customer.tam_b ? ` / 备 ${customer.tam_b}` : ''}
+                </dd>
+              </div>
+            ) : null}
             <div>
               <dt>来源</dt>
               <dd>{platforms.length ? platforms.join('、') : '—'}</dd>
@@ -318,6 +384,53 @@ export function EventPane({ event }: { event: API.EventResponse }) {
             </dl>
           </section>
           <RecoveryDetails event={event} />
+          <section className="aside-timeline" aria-label="历次变化">
+            <h3>历次变化</h3>
+            {event.updated_by.length ? (
+              <ol>
+                {event.updated_by.map((revision, index) => {
+                  const proof = revisionEvidence(
+                    revision,
+                    event.updated_by[index - 1]?.snapshot,
+                    evidence,
+                  );
+                  return (
+                    <li
+                      key={`${revision.revision_no ?? index}:${revision.window_start}`}
+                    >
+                      <strong>
+                        {revision.action === 'created'
+                          ? '创建事件'
+                          : '更新事件'}
+                      </strong>
+                      <small>
+                        {formatTime(revision.window_start)} —{' '}
+                        {formatTime(revision.window_end)}
+                      </small>
+                      <p>
+                        {revision.change_summary ||
+                          revisionHeadline(revision) ||
+                          '已保存本轮变化'}
+                      </p>
+                      {proof.locatable.map((key, position) => (
+                        <button
+                          type="button"
+                          key={key}
+                          className="evidence-locate"
+                          onClick={() => locate(key)}
+                        >
+                          定位原文
+                          {proof.locatable.length > 1 ? ` ${position + 1}` : ''}
+                        </button>
+                      ))}
+                    </li>
+                  );
+                })}
+              </ol>
+            ) : (
+              <p>暂无已保存的变化记录</p>
+            )}
+          </section>
         </div>
       </aside>
     </>

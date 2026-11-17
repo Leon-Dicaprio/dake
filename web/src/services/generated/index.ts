@@ -6,9 +6,15 @@ import * as system from "./system";
 import * as config from "./config";
 import * as events from "./events";
 import * as runs from "./runs";
+import * as customers from "./customers";
+import * as tasks from "./tasks";
+import * as senderRules from "./senderRules";
 export default {
   system,
   config,
   events,
   runs,
+  customers,
+  tasks,
+  senderRules,
 };
