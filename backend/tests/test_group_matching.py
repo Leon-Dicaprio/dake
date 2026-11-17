@@ -243,3 +243,40 @@ def test_legacy_request_shape_and_execution_policy_remain_compatible(tmp_path):
     request, _ = prepare_request(service.settings, {})
     assert not any(key.startswith("group_") for key in request)
     assert not any(key.startswith("group_") for key in execution_policy(service))
+
+
+def test_new_with_correction_is_review_and_valid_matter_still_commits(tmp_path):
+    a=message('valid',1,'虚构独立资源申请')
+    b=message('conflict',1,'虚构上传故障实际一直存在')
+    service,store,provider,_=build(tmp_path,[a,b],{
+        a.message_id:candidate(a,changes=[change(a)]),
+        b.message_id:candidate(b,changes=[change(b,kind='correction',replaces='虚构已恢复')]),
+    })
+    service.settings=replace(service.settings,group_matching_enabled=True)
+    result=service.run_window(UID,window(1))
+    assert len(result.created)==len(result.review)==1 and result.processed==2
+    record=store.attributions[(b.key,service.stream)]['records'][0]
+    assert record['requested_action']=='new' and record['action']=='review'
+    assert len(store.events)==1
+
+
+def test_initial_conflict_does_not_hide_fabricated_evidence(tmp_path):
+    from dake.analysis.attribution import parse_attribution_output
+    msg=message('conflict',1)
+    facts=[change(msg,kind='correction',replaces='虚构已恢复')]
+    facts[0]['evidence'][0]['quote']='不在原文中的虚构引文'
+    with pytest.raises(ContractError,match='直接证据'):
+        parse_attribution_output(model_output(msg,changes=facts),[msg],[],[],review_initial_conflicts=True)
+
+
+def test_initial_conflict_parser_keeps_actual_model_suggestion(tmp_path):
+    from dake.analysis.attribution import parse_attribution_output
+    msg=message('conflict',1)
+    facts=[change(msg,kind='correction',replaces='虚构已恢复')]
+    notes=[]
+    parsed=parse_attribution_output(model_output(msg,changes=facts),[msg],[],[],
+        review_initial_conflicts=True,normalizations=notes)
+    assert parsed[0].decision=='new' and parsed[0].changes==facts
+    assert notes[-1]['reason']=='initial_action_conflict_requires_review'
+    with pytest.raises(ContractError,match='新建只记录'):
+        parse_attribution_output(model_output(msg,changes=facts),[msg],[],[])

@@ -47,6 +47,10 @@ class SummaryChange(StrictObject):
     replaces: str | None
 
 
+class InitialActionConflict(ContractError):
+    """直接证据有效，但新建与更正旧事项的动作互相矛盾。"""
+
+
 def complete_field_changes(candidate, available, eligible_keys):
     """字段已有本轮逐字依据时补原文事实，避免要求模型重复填写同一份依据。"""
     if candidate.decision not in {"new", "update"} or not candidate.changes:
@@ -96,8 +100,6 @@ def validate_changes(candidate, available, eligible_keys):
             raise ContractError("进展确认不能替换旧摘要")
         if change.kind == "correction" and change.replaces is None:
             raise ContractError("明确纠正须指出旧摘要中的被纠正片段")
-        if candidate.decision == "new" and (change.replaces is not None or change.kind != "progress"):
-            raise ContractError("新建只记录初始事实，不能替换不存在的旧摘要")
         for ref in change.evidence:
             message = available.get(ref.message_id)
             if (ref.message_id not in allowed or message is None or message.key != ref.message_id
@@ -124,6 +126,9 @@ def validate_changes(candidate, available, eligible_keys):
             "只提交本轮确有变化且有依据的字段；未变化或仅来自旧背景的字段不重复填写，"
             "status/severity 用 null，列表中移除相应项，旧值由程序保留。"
             "确有本轮新事实时补充对应 changes 及其逐字引文；不得编造事实来凑齐引用。")
+    if candidate.decision == "new" and any(raw.get("replaces") is not None or raw["kind"] != "progress"
+                                           for raw in candidate.changes):
+        raise InitialActionConflict("新建只记录初始事实，不能替换不存在的旧摘要")
 
 
 def prepare_summary(candidate, event, available, *, historical=False, keep_facts=False):

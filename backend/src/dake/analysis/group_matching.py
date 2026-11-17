@@ -5,6 +5,7 @@ import hashlib
 
 from .references import EVENT_REFERENCE as _EVENT_REF, MESSAGE_REFERENCE as _MESSAGE_REF
 from .contract import ContractError
+from .summary_changes import validate_changes, InitialActionConflict
 
 
 MATCH_FIELDS = ("产品", "资源标识", "操作", "环境")
@@ -16,6 +17,7 @@ history_retrieval.scope=conversation 时，只处理这个群的事项，跨群�
 显式 event_id 或完整 message_id 是程序可核验的引用；同产品、同资源、同群或时间相近都不证明同一事项。
 仅重复旧事实时返回 duplicate，业务结果归为非业务/无需推进，不更新事件。
 关键词零命中不证明独立新建；检索不完整或引用无法定位时返回 review。
+新建建议与更正或替换旧摘要动作冲突时，程序核验直接依据后降为待确认，合法事项继续处理。
 """
 
 
@@ -53,6 +55,11 @@ def constrain(candidate, *, retrieval, available, eligible):
         ids.update(matches)
     target = next(iter(ids)) if len(ids) == 1 and not unresolved else None
     reason = None
+    if candidate.decision == "new":
+        try:
+            validate_changes(candidate, available, human)
+        except InitialActionConflict:
+            reason = "新建与更正旧摘要动作冲突，需确认事项归属"
     if unresolved or len(ids) > 1 or (message_ids and retrieval.exact_limited):
         reason = "明确引用无法唯一定位本群旧事件"
     elif target and candidate.referenced_event_id not in (None, target):

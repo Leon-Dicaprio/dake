@@ -242,7 +242,9 @@ class RunRunner:
                         prior = interrupted.get("request", {})
                         if (prior.get("provider", "stub") != request.get("provider", "stub") or
                                 (prior.get("analysis_stream") is not None and
-                                 prior["analysis_stream"] != request.get("analysis_stream"))):
+                                 prior["analysis_stream"] != request.get("analysis_stream")) or
+                                any(prior.get(key) != request.get(key) for key in
+                                    ("attribution_version", "group_matching_version"))):
                             interrupted = None
                     baseline = (service.store.event_revision_counts(settings.uid, service.stream)
                         if settings.group_matching_enabled else {event.event_id: len(event.updated_by)

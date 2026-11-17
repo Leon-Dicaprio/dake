@@ -109,3 +109,19 @@ def test_multiple_groups_have_distinct_proposal_ids_in_one_receipt(case):
     assert len(proposals) == len(set(proposals)) == 2
     assert len(result.created) == result.event_count == 2
     assert len(case.latest()["receipt"]["writes"]) == 2
+
+
+def test_initial_action_conflict_commits_valid_matter_and_review_together(case):
+    service=grouped(case)
+    ambiguous=replace(message('synthetic-initial-conflict',1,'虚构问题实际一直存在'),uid=case.uid)
+    case.source.messages.append(ambiguous)
+    case.provider.mapping[ambiguous.message_id]=candidate(ambiguous,
+        changes=[change(ambiguous,kind='correction',replaces='虚构已恢复')])
+    result=service.run_window(case.uid,window(1))
+    assert result.processed==2 and len(result.created)==len(result.review)==1
+    assert len(service.store.list_events(case.uid,service.stream))==1
+    assert not service.store.pending_messages(case.uid,window(1).start,window(1).end,service.stream)
+    receipt=case.latest()['receipt']
+    assert case.latest()['outcome']=='committed' and len(receipt['writes'])==1
+    decisions=receipt['cycle']['filter_audit']
+    assert any(r.get('requested_action')=='new' and r.get('action')=='review' for r in decisions)

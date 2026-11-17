@@ -314,6 +314,7 @@ class XHubProvider:
             normalizations = []
             candidates = parser(content, new_messages, context, visible_events,
                 **({"normalizations": normalizations,
+                    "review_initial_conflicts": self.settings.group_matching_enabled,
                     "history_items": payload.get("history_context", {}).get("items", [])}
                    if self.history_retrieval is not None else {}))
             trace["normalizations"] = normalizations
