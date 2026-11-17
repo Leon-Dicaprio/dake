@@ -62,7 +62,8 @@ def test_preflight_stops_before_any_ddl_when_target_is_not_safe(tmp_path, proble
     assert calls[-1] == "closed"
 
 
-def test_password_file_must_be_explicit_private_and_temporary(tmp_path):
+def test_password_file_must_be_explicit_private_and_temporary(acceptance_tmp_path):
+    tmp_path = acceptance_tmp_path
     path = tmp_path / "test-password"
     path.write_text("synthetic-unused", encoding="utf-8")
     path.chmod(0o600)

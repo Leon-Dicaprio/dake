@@ -30,7 +30,7 @@ def validate_port(port, mysql_port):
 def validate_manifest_path(value, *, new=False):
     """仅在临时目录读写本次索引，不接受私有数据路径，不覆盖已有文件。"""
     path = Path(value).resolve()
-    if not path.is_relative_to(Path('/tmp')) or path.name.startswith('.env'):
+    if not path.is_relative_to(Path('/tmp').resolve()) or path.name.startswith('.env'):
         raise ValueError("案例索引必须位于 /tmp 且不是环境文件")
     if new and (path.exists() or not path.parent.is_dir()):
         raise ValueError("案例索引必须是已有临时目录中的新文件，不能覆盖已有索引")

@@ -48,7 +48,7 @@ class TestDatabase:
 def read_test_password(path):
     """仅接受 /tmp 内新建的私有测试密码文件，不使用业务密钥或 .env。"""
     path = Path(path).resolve()
-    if not path.is_relative_to(Path("/tmp")) or path.name.startswith(".env"):
+    if not path.is_relative_to(Path("/tmp").resolve()) or path.name.startswith(".env"):
         raise ValueError("测试密码文件须位于 /tmp，且不能是 .env")
     if path.stat().st_mode & 0o077:
         raise ValueError("测试密码文件须为私有权限，例如 600")
