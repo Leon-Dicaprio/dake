@@ -110,18 +110,23 @@ class RunRepository:
             if not rows or rows[0]["ok"] != 1:
                 raise RunConflict("任务提交繁忙，请稍后重试")
             try:
-                rows, _ = store._execute("SELECT uid FROM processing_runs WHERE status IN ('queued','running')")
-                if any(row["uid"] == request["uid"] for row in rows):
-                    raise RunConflict("该客户已有等待或执行中的任务")
-                if len(rows) >= API_MAX_PENDING_RUNS:
-                    raise RunConflict("等待队列已满，请等待已有任务结束")
-                store._execute("""INSERT INTO processing_runs
-                    (run_id,uid,mode,status,request,total_windows,created_at,cycles)
-                    VALUES (%s,%s,%s,'queued',%s,%s,%s,JSON_ARRAY())""",
-                    (run_id, request["uid"], request["mode"], _encoded(request), total_windows, _now()))
+                self.insert_queued(store, request, total_windows, run_id, _now())
             finally:
                 store._execute("SELECT RELEASE_LOCK(%s)", (self.submit_lock,))
         return self.get(run_id)
+
+    @staticmethod
+    def insert_queued(store, request, total_windows, run_id, created_at):
+        """调用方持有 submit_lock；手动与定时入队复用冲突、容量及写入规则。"""
+        rows, _ = store._execute("SELECT uid FROM processing_runs WHERE status IN ('queued','running')")
+        if any(row["uid"] == request["uid"] for row in rows):
+            raise RunConflict("该客户已有等待或执行中的任务")
+        if len(rows) >= API_MAX_PENDING_RUNS:
+            raise RunConflict("等待队列已满，请等待已有任务结束")
+        store._execute("""INSERT INTO processing_runs
+            (run_id,uid,mode,status,request,total_windows,created_at,cycles)
+            VALUES (%s,%s,%s,'queued',%s,%s,%s,JSON_ARRAY())""",
+            (run_id, request["uid"], request["mode"], _encoded(request), total_windows, created_at))
 
     def get(self, run_id: str, *, internal=False, uid=None, stream=None) -> dict | None:
         """取得完整任务及周期结果；内部字段只供中断恢复使用。"""
@@ -229,7 +234,17 @@ class RunRepository:
         """仅由拿到全局执行锁的实例调用；保留已完成周期，明确中断状态。"""
         with self.connection() as store:
             store._execute("""UPDATE processing_runs SET status='failed',finished_at=%s,
+                request=IF(JSON_EXTRACT(request,'$.schedule_id') IS NULL,request,
+                    JSON_SET(request,'$.execution_error_kind','interrupted')),
                 error=%s WHERE status='running'""", (_now(), "服务中断，已完成周期已保留；可重新提交相同范围继续验证"))
+
+    def record_failure_kind(self, run_id, runner_id, kind):
+        """固定机器分类与脱敏展示分离；不从错误文本推断可重试性。"""
+        if kind not in {"transient", "verification", "delivery", "permanent", "interrupted"}:
+            raise ValueError("执行错误分类无效")
+        with self.connection() as store:
+            store._execute("UPDATE processing_runs SET request=JSON_SET(request,'$.execution_error_kind',%s) "
+                "WHERE run_id=%s AND runner_id=%s AND status='running'", (kind, run_id, runner_id))
 
     def claim_next(self, runner_id: str) -> dict | None:
         """全局单执行者领取最早任务，其他 API 实例只能提交或查询。"""

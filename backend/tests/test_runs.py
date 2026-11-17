@@ -151,6 +151,21 @@ def test_progress_write_failure_restores_committed_cycle_and_fresh_late_changes(
     assert repeated["cycles"][0]["created"] == [] and repeated["cycles"][0]["processed"] == 0
 
 
+def test_scheduled_window_keeps_original_business_start_for_late_messages(tmp_path):
+    """当前任务向前推进，不能把补查发现的较早消息排除在业务起点之外。"""
+    _, repository, runner, store, _, provider, request, _, seen = run_fixture(tmp_path, days=1)
+    origin = request["start"]
+    request.update(business_start=origin, schedule_id="synthetic-schedule", interval="15m",
+                   start="2026-11-08T10:00:00+08:00", end="2026-11-08T10:15:00+08:00")
+    first = execute_next(repository, runner, request, 1)
+    assert first["status"] == "succeeded" and first["cycles"][0]["processed"] == 1
+    assert seen[0].start == bound(origin)
+    assert first["cycles"][0]["window"]["start"] == request["start"]
+    repeated = execute_next(repository, runner, request, 1)
+    assert repeated["cycles"][0]["processed"] == 0
+    assert len(store.events) == len(provider.calls) == 1
+
+
 def test_loss_of_worker_lock_after_commit_is_failed_and_recoverable(tmp_path):
     _, repository, runner, store, _, _, request, total, _ = run_fixture(tmp_path, days=1)
 

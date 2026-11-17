@@ -8,13 +8,14 @@ import threading
 from uuid import uuid4
 
 from ..bootstrap import build_service
-from ..analysis.providers.xhub import XHubError, configured_stream
+from ..analysis.providers.xhub import XHubError, XHubTransientError, configured_stream
+from ..ingestion.client import TransientChatRecordsError
 from ..analysis.attribution import attribution_version
 from ..config import API_MAX_RANGE_DAYS, API_MAX_WINDOWS, HistoryContextSettings, HistoryRetrievalSettings, bound, duration
 from ..domain.models import parse_time, windows
 from ..ingestion.client import validate_uid
 from ..repositories.local_state import private_json
-from ..repositories.attempts import AttemptError, DeliveryError
+from ..repositories.attempts import AttemptError, AttemptPendingVerification, DeliveryError
 from ..services.queries import duration_label
 from ..services.replay import ReplayService
 
@@ -175,7 +176,8 @@ class RunRunner:
     def execute(self, run):
         """每个任务独占业务连接，通过既有 ReplayService 按配置周期处理。"""
         request = run["request"]
-        settings = replace(self.settings, uid=request["uid"], start=parse_time(request["start"]),
+        settings = replace(self.settings, uid=request["uid"], start=parse_time(request.get("business_start", request["start"])),
+                           chat_retries=0 if request.get("schedule_id") else self.settings.chat_retries,
                            provider=request.get("provider", "stub"),
                            llm_model=request.get("llm_model") or self.settings.llm_model,
                            llm_max_tokens=request.get("llm_max_tokens") or self.settings.llm_max_tokens,
@@ -201,21 +203,23 @@ class RunRunner:
             if request.get("analysis_stream") and request["analysis_stream"] != configured_stream(settings):
                 raise XHubError("提示词或输出合约已变化，请重新提交任务")
             with self.service_factory(settings, offline=request["offline"]) as service:
-                retry_attempts = {}
+                retry_attempts = {0: request["scheduled_retry_of"]} if request.get("scheduled_retry_of") else {}
                 # 仅使用本任务已持久化的进度；不移动业务起点，也不把文件水位当成提交证明。
                 start_index = run["completed_windows"]
                 if not 0 <= start_index <= run["total_windows"]:
                     raise RunInterrupted()
-                results = ReplayService(service).run_range(settings.uid, settings.start, settings.end, settings.interval,
+                task_start = parse_time(request["start"])
+                results = ReplayService(service).run_range(settings.uid, task_start, settings.end, settings.interval,
                                                           run_id=run["run_id"], retry_attempts=retry_attempts,
                                                           start_index=start_index)
-                for index, window in enumerate(windows(settings.start, settings.end, settings.interval)):
+                for index, window in enumerate(windows(task_start, settings.end, settings.interval)):
                     if index < start_index:
                         continue
                     if self._stop.is_set() or (self._keeper is not None and not self._leader_alive()):
                         raise RunInterrupted()
                     window_value = {"start": window.start.isoformat(), "end": window.end.isoformat()}
-                    interrupted = self.repository.interrupted_window(settings.uid, request["mode"], window_value)
+                    interrupted = (None if request.get("schedule_id") else
+                                   self.repository.interrupted_window(settings.uid, request["mode"], window_value))
                     if interrupted:
                         prior = interrupted.get("request", {})
                         if (prior.get("provider", "stub") != request.get("provider", "stub") or
@@ -225,7 +229,7 @@ class RunRunner:
                     baseline = {event.event_id: len(event.updated_by)
                                 for event in service.store.list_events(settings.uid, service.stream)}
                     self.repository.begin_window(run["run_id"], self.runner_id, window_value, baseline)
-                    if interrupted and service.attempts is not None:
+                    if interrupted and service.attempts is not None and not request.get("schedule_id"):
                         previous = service.attempts.for_run_window(settings.uid, service.stream,
                             interrupted["run_id"], interrupted["completed_windows"], window)
                         if previous is not None:
@@ -269,6 +273,12 @@ class RunRunner:
                 raise RunInterrupted()
             self.repository.finish(run["run_id"], self.runner_id)
         except Exception as error:
+            if request.get("schedule_id"):
+                kind = ("verification" if isinstance(error, AttemptPendingVerification) else
+                        "delivery" if isinstance(error, DeliveryError) else
+                        "transient" if isinstance(error, (TransientChatRecordsError, XHubTransientError)) else
+                        "interrupted" if isinstance(error, RunInterrupted) else "permanent")
+                self.repository.record_failure_kind(run["run_id"], self.runner_id, kind)
             message = ("服务已停止，已完成周期保留；可重新提交相同范围"
                        if isinstance(error, RunInterrupted) else
                        str(error) if isinstance(error, (XHubError, AttemptError)) else

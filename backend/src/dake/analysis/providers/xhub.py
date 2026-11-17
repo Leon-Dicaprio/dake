@@ -34,6 +34,10 @@ class XHubContractError(XHubError):
     """仅携带本地固定校验提示，允许一次有界结构纠正。"""
 
 
+class XHubTransientError(XHubError):
+    """仅网络、限流和服务暂时不可用允许调度层有限重试。"""
+
+
 @dataclass(frozen=True)
 class XHubConfig:
     """从项目根配置加载密钥，不因当前目录变化而读取另一份 .env。"""
@@ -281,7 +285,8 @@ class XHubProvider:
                                         headers={"Authorization": f"Bearer {self.config.api_key}"})
             trace["http_status"] = response.status_code
             if response.status_code != 200:
-                raise XHubError(f"XHub 请求失败（HTTP {response.status_code}）")
+                error_type = XHubTransientError if response.status_code in (408, 429, 500, 502, 503, 504) else XHubError
+                raise error_type(f"XHub 请求失败（HTTP {response.status_code}）")
             body = response.json()
             choice = body["choices"][0]
             message = choice["message"]
@@ -315,7 +320,7 @@ class XHubProvider:
         except httpx.HTTPError as error:
             trace["error"] = "transport_error"
             trace["transport_error_type"] = type(error).__name__
-            raise XHubError("XHub 网络请求失败或超时；未自动重试") from None
+            raise XHubTransientError("XHub 网络请求失败或超时；未自动重试") from None
         except (KeyError, IndexError, TypeError, ValueError) as error:
             trace["error"] = "contract_error" if isinstance(error, ContractError) else "protocol_error"
             if isinstance(error, ContractError):

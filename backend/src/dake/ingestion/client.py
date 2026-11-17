@@ -17,6 +17,10 @@ class ChatRecordsError(RuntimeError):
     """对外只提供脱敏的网络或响应错误，避免异常携带聊天正文。"""
 
 
+class TransientChatRecordsError(ChatRecordsError):
+    """临时取数错误可由调度层有界重试，不包含协议或鉴权失败。"""
+
+
 def validate_uid(uid: str) -> None:
     """限制客户标识字符，也保护使用该标识组成的本地缓存路径。"""
     if not isinstance(uid, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", uid):
@@ -74,12 +78,13 @@ class ChatRecordsClient:
                 if code in (408, 429, 500, 502, 503, 504) and attempt < self.retries:
                     time.sleep(min(2**attempt, 4))
                     continue
-                raise ChatRecordsError(f"官方取数接口 HTTP {code}；未记录响应正文") from None
+                error_type = TransientChatRecordsError if code in (408, 429, 500, 502, 503, 504) else ChatRecordsError
+                raise error_type(f"官方取数接口 HTTP {code}；未记录响应正文") from None
             except (URLError, TimeoutError, socket.timeout, ConnectionError, OSError, HTTPException):
                 if attempt < self.retries:
                     time.sleep(min(2**attempt, 4))
                     continue
-                raise ChatRecordsError("官方取数接口网络连接失败；请检查内网与服务状态") from None
+                raise TransientChatRecordsError("官方取数接口网络连接失败；请检查内网与服务状态") from None
             try:
                 payload = json.loads(raw)
             except (ValueError, UnicodeError):

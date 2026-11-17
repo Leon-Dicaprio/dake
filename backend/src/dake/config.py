@@ -82,6 +82,7 @@ class HistoryContextSettings:
 class Settings:
     """依赖注入的运行配置；密码不参与对象文本表示，避免调试时意外输出。"""
     mysql_host: str = "127.0.0.1"
+    chat_retries: int = 2
     mysql_port: int = 3307
     mysql_database: str = "dake_aftersales"
     mysql_user: str = "dake"
@@ -170,6 +171,8 @@ class Settings:
             raise ValueError("LLM_PROVIDER 仅支持 stub 或 xhub")
         if not self.llm_model or not 1 <= self.llm_max_tokens <= 8192 or not 1 <= self.llm_timeout_seconds <= 300:
             raise ValueError("模型名称、输出上限或超时配置无效")
+        if type(self.chat_retries) is not int or not 0 <= self.chat_retries <= 3:
+            raise ValueError("取数内部重试次数无效")
 
     def store_kwargs(self) -> dict:
         """将数据库配置交给存储组件；调用方不得记录返回的凭据。"""
