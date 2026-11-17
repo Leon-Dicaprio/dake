@@ -60,6 +60,8 @@ def main():
         runner = RunRunner(settings, runs, service_factory=factory)
         app = create_app(settings, run_repository=runs, runner=runner, scheduling_service=schedule)
         dist = root / "web/dist"
+        @app.get("/runs", response_class=HTMLResponse)
+        @app.get("/events", response_class=HTMLResponse)
         @app.get("/schedules", response_class=HTMLResponse)
         def page():
             html = (dist / "index.html").read_text()

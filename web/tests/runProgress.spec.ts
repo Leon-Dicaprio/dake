@@ -85,6 +85,12 @@ async function mockProgress(page: Page) {
     reads: [] as URL[],
     delayId: '',
     release: undefined as (() => void) | undefined,
+    trace: {
+      items: [],
+      available: true,
+      total: 0,
+      next_offset: null,
+    } as API.RunExecutionsResponse,
   };
   await page.route('**/*', async (route) => {
     const request = route.request();
@@ -122,6 +128,8 @@ async function mockProgress(page: Page) {
       return route.fulfill({ json: config });
     }
     if (url.pathname.startsWith('/api/v1/runs')) {
+      if (url.pathname.endsWith('/executions'))
+        return route.fulfill({ json: state.trace });
       if (state.failReads)
         return route.fulfill({ status: 503, json: { detail: '虚构连接中断' } });
       const scoped = state.tasks.filter(
@@ -196,7 +204,7 @@ test('默认选择进行中任务，自动显示停止原因并保留真实窗�
     detail.getByText('智能识别尚未启用', { exact: false }),
   ).toHaveCount(0);
   await expect(page.getByRole('button', { name: '开始处理' })).toHaveCount(0);
-  await expect(detail.locator('.run-cycles')).not.toHaveAttribute('open');
+  await expect(detail.locator('.run-cycles')).toHaveAttribute('open');
   Object.assign(current, {
     status: 'failed',
     completed_windows: 13,
@@ -209,6 +217,15 @@ test('默认选择进行中任务，自动显示停止原因并保留真实窗�
   await expect(detail.locator('.run-current-window')).toContainText('停止时段');
   await expect(detail.getByRole('progressbar')).toHaveAttribute('value', '13');
   await expect(detail.getByText('任务已停止', { exact: true })).toBeVisible();
+  await expect
+    .poll(() =>
+      state.reads.some(
+        (url) =>
+          url.pathname.endsWith('/executions') &&
+          url.searchParams.get('window_index') === '13',
+      ),
+    )
+    .toBeTruthy();
   if (process.env.DAKE_SCREENSHOTS) {
     await page.screenshot({
       path: `${process.env.DAKE_SCREENSHOTS}/run-progress-synthetic.png`,
@@ -224,6 +241,112 @@ test('默认选择进行中任务，自动显示停止原因并保留真实窗�
           url.searchParams.get('stream') === stream,
       ),
   ).toBeTruthy();
+  expect(state.writes).toEqual([]);
+});
+
+test('零事件时也显示新消息，轮询取得实际判断并以收据区分保存结果', async ({
+  page,
+}) => {
+  const state = await mockProgress(page);
+  state.events = [];
+  const item: API.RunExecution = {
+    attempt_id: 'synthetic-trace',
+    window: { start: moment, end: '2038-06-01T09:05:00+08:00' },
+    outcome: 'running',
+    error_type: null,
+    stages: [
+      {
+        stage: 'input',
+        status: 'completed',
+        recorded_at: moment,
+        call_no: null,
+        error_type: null,
+      },
+    ],
+    inputs: [
+      {
+        origin: 'request',
+        call_no: 1,
+        new_messages: [
+          {
+            source: 'synthetic',
+            message_id: 'new-1',
+            digest: 'v1',
+            conversation_id: 'synthetic-room',
+            send_time: moment,
+            role: 'new',
+            quote: '虚构上传失败，请帮忙排查。',
+          },
+        ],
+        auxiliary_messages: [],
+      },
+    ],
+    histories: [
+      {
+        metadata: {
+          scanned: 0,
+          incomplete: false,
+          conversation_id: 'synthetic-room',
+        },
+        candidates: [],
+      },
+    ],
+    contexts: [],
+    suggestions: [],
+    decisions: [],
+    commit_status: 'unconfirmed',
+    processed: null,
+    writes: [],
+  };
+  state.trace = { items: [item], available: true, total: 1, next_offset: null };
+  await page.goto('/runs');
+  const trace = page.getByRole('region', { name: '新消息处理过程' });
+  await expect(
+    trace.getByText('虚构上传失败，请帮忙排查。', { exact: true }),
+  ).toBeVisible();
+  await expect(trace.getByText('等待分析结果。')).toBeVisible();
+  item.suggestions = [
+    {
+      proposal_id: 'synthetic-proposal',
+      call_no: 1,
+      action: 'new',
+      event_id: null,
+      possible_event_ids: [],
+      summary: '虚构上传故障',
+      status: null,
+      reason: '当前明确报告上传失败',
+      facts: [],
+      basis: [],
+    },
+  ];
+  item.decisions = [
+    {
+      proposal_id: 'synthetic-proposal',
+      action: 'new',
+      event_id: 'synthetic-event',
+      possible_event_ids: [],
+      reason: '当前明确报告上传失败',
+      contributed_to_revision: true,
+      change_scope: 'single_proposal',
+      before: null,
+      after: null,
+      added_evidence: [],
+    },
+  ];
+  await expect(trace.getByText('虚构上传故障', { exact: true })).toBeVisible();
+  await expect(trace.getByText('尚无已确认的保存结果')).toBeVisible();
+  await expect(trace.getByRole('link', { name: '查看事件' })).toHaveCount(0);
+  item.commit_status = 'committed';
+  item.outcome = 'committed';
+  item.processed = 1;
+  item.writes = [{ event_id: 'synthetic-event', action: 'created' }];
+  await expect(trace.getByRole('link', { name: '查看事件' })).toBeVisible();
+  item.outcome = 'commit_unknown';
+  await expect(
+    trace.getByText('提交待核实（不自动重跑）', { exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(trace.getByText('虚构上传故障', { exact: true })).toBeVisible();
   expect(state.writes).toEqual([]);
 });
 
@@ -337,5 +460,39 @@ test('没有任务与失败原因缺失均如实提示', async ({ page }) => {
   await expect(page.getByTestId('run-detail').getByRole('alert')).toContainText(
     '停止原因未记录',
   );
+  expect(state.writes).toEqual([]);
+});
+
+test('处理新时段默认接续成功任务，使用北京时间并读取最新官方消息', async ({
+  page,
+}) => {
+  const state = await mockProgress(page);
+  state.tasks = [task('synthetic-done', 'succeeded')];
+  state.tasks[0].completed_windows = state.tasks[0].total_windows;
+  await page.goto('/runs');
+  await page.getByRole('button', { name: '处理新时段', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.locator('input[name=start]')).toHaveValue(
+    '2038-06-02T09:00',
+  );
+  await expect(dialog.locator('input[name=end]')).toHaveValue(
+    '2038-06-02T09:05',
+  );
+  await expect(dialog.getByRole('checkbox')).not.toBeChecked();
+  await dialog.getByRole('button', { name: '取消', exact: true }).click();
+  expect(state.writes).toEqual([]);
+});
+
+test('没有历史任务时保留所选客户并按北京时间零点开始', async ({ page }) => {
+  const state = await mockProgress(page);
+  state.tasks = [];
+  await page.goto('/runs?uid=555002&stream=synthetic-progress-a');
+  await page.getByRole('button', { name: '处理新时段', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.locator('input[name=uid]')).toHaveValue('555002');
+  await expect(dialog.locator('input[name=start]')).toHaveValue(
+    '2038-06-01T00:00',
+  );
+  await dialog.getByRole('button', { name: '取消', exact: true }).click();
   expect(state.writes).toEqual([]);
 });

@@ -1,6 +1,11 @@
 import { getConfig } from './generated/config';
 import { getEventChanges, listEvents } from './generated/events';
-import { createRun, getRun, listRuns } from './generated/runs';
+import {
+  createRun,
+  getRun,
+  getRunExecutions,
+  listRuns,
+} from './generated/runs';
 import {
   listSchedules,
   pauseSchedule,
@@ -45,6 +50,18 @@ export const api = {
     signal?: AbortSignal,
   ) => getRun({ run_id: runId, uid, stream }, { signal }),
   createRun: (body: API.RunRequest) => createRun(body),
+  runExecutions: (
+    runId: string,
+    uid: string,
+    stream: string,
+    windowIndex: number,
+    offset: number,
+    signal?: AbortSignal,
+  ) =>
+    getRunExecutions(
+      { run_id: runId, uid, stream, window_index: windowIndex, offset },
+      { signal },
+    ),
   schedules: (signal?: AbortSignal) => listSchedules({ signal }),
   startSchedules: (start_date: string) => startSchedules({ start_date }),
   pauseSchedule: (schedule_id: string) => pauseSchedule({ schedule_id }),

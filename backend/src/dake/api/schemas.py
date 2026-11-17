@@ -520,6 +520,41 @@ class RunListResponse(APIModel):
     total: int
 
 
+class RunHistory(APIModel):
+    metadata: dict[str, JsonValue]
+    candidates: list[dict[str, JsonValue]]
+
+
+class RunWrite(APIModel):
+    event_id: str | None = None
+    action: str | None = None
+
+
+class RunExecution(APIModel):
+    """不依赖已生成事件的逐窗口真实处理过程。"""
+
+    attempt_id: str
+    window: TimeWindow
+    outcome: str
+    error_type: str | None = None
+    stages: list[ExecutionStage]
+    inputs: list[ExecutionInput]
+    histories: list[RunHistory]
+    contexts: list[ExecutionContext]
+    suggestions: list[ExecutionSuggestion]
+    decisions: list[ExecutionDecision]
+    commit_status: str
+    processed: int | None = None
+    writes: list[RunWrite]
+
+
+class RunExecutionsResponse(APIModel):
+    items: list[RunExecution]
+    available: bool
+    total: int
+    next_offset: int | None = None
+
+
 class HealthResponse(APIModel):
     """本地服务健康状态，不携带运行凭据。"""
 

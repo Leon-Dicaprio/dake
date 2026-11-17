@@ -13,6 +13,7 @@ from .event_changes import event_changes
 from .execution_changes import execution_changes
 from .sender_identity import load_sender_roles
 from .sender_kinds import load_sender_kinds
+from .run_executions import project_run_execution
 
 
 def duration_label(value: timedelta) -> str:
@@ -110,3 +111,13 @@ class QueryService:
             for batch in result["batches"]:
                 batch["attributions"] = []
         return result
+
+    def run_executions(self, run_id, uid, stream, window_index, offset=0):
+        """独立于事件读取窗口过程，完整授权范围由路由及仓储共同限定。"""
+        self.scope(uid, stream)
+        page = self.attempts.list_for_run_window(uid, stream, run_id, window_index, offset)
+        items = [project_run_execution(r, uid, stream) for r in page['items']
+                 if (r.get('uid'), r.get('stream'), r.get('run_id'), r.get('window_index')) ==
+                    (uid, stream, run_id, window_index)]
+        return dict(items=items, available=page['available'], total=page['total'],
+                    next_offset=offset + len(page['items']) if offset + len(page['items']) < page['total'] else None)

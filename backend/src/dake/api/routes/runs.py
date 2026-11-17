@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from ...ingestion.client import validate_uid
 from ...jobs.runner import prepare_request
 from ..dependencies import AppServices, services
-from ..schemas import RunListResponse, RunRequest, RunResponse
+from ..schemas import RunListResponse, RunRequest, RunResponse, RunExecutionsResponse
 
 router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
 Deps = Annotated[AppServices, Depends(services)]
@@ -33,6 +33,19 @@ def create_run(body: RunRequest, deps: Deps):
     run = deps.runs.create(request, total)
     deps.runner.notify()
     return run
+
+
+@router.get("/{run_id}/executions", response_model=RunExecutionsResponse, operation_id="get_run_executions")
+def get_run_executions(run_id: UUID, deps: Deps,
+                       uid: str = Query(min_length=1, max_length=128),
+                       stream: str = Query(min_length=1, max_length=128),
+                       window_index: int = Query(ge=0), offset: int = Query(default=0, ge=0)):
+    """先核对任务归属，再读取本窗口过程；失败和零事件窗口也能查看。"""
+    validate_uid(uid)
+    run = deps.runs.get(str(run_id), uid=uid, stream=stream)
+    if run is None or window_index >= run['total_windows']:
+        raise HTTPException(status_code=404, detail="未找到该客户的处理窗口")
+    return deps.queries.run_executions(str(run_id), uid, stream, window_index, offset)
 
 
 @router.get("/{run_id}", response_model=RunResponse, operation_id="get_run")

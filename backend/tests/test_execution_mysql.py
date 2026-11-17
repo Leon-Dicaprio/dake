@@ -288,3 +288,20 @@ def test_attempt_reads_and_mutations_reject_foreign_scope(case):
         with pytest.raises(DeliveryError):
             case.attempts.delivery(uid, stream, result.attempt_id, "files", "failed")
     assert case.latest() == original
+
+
+def test_window_trace_is_available_without_event_link_and_never_crosses_scope(case):
+    service = case.service
+    run_id = str(uuid4())
+    result = service.run_window(case.uid, window(1), execution=dict(run_id=run_id, window_index=0))
+    repo = service.attempts
+    page = repo.list_for_run_window(case.uid, service.stream, run_id, 0)
+    assert page['available'] and page['total'] == 1
+    assert page['items'][0]['attempt_id'] == result.attempt_id
+    assert page['items'][0]['receipt']['cycle']['created'] == result.created
+    assert not repo.list_for_run_window(case.uid, service.stream, run_id, 0, offset=1)['items']
+    for uid, stream, rid, index in [(case.uid, service.stream, run_id, 1),
+        (case.uid, service.stream, str(uuid4()), 0), ('synthetic-other', service.stream, run_id, 0),
+        (case.uid, 'synthetic-other-stream', run_id, 0)]:
+        other = repo.list_for_run_window(uid, stream, rid, index)
+        assert other['total'] == 0 and not other['items']

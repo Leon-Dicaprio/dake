@@ -574,6 +574,14 @@ declare namespace API {
     stream?: string | null;
   };
 
+  type getRunExecutionsParams = {
+    run_id: string;
+    uid: string;
+    stream: string;
+    window_index: number;
+    offset?: number;
+  };
+
   type getRunParams = {
     run_id: string;
     uid?: string | null;
@@ -722,6 +730,52 @@ declare namespace API {
     reason: string;
   };
 
+  type RunExecution = {
+    /** Attempt Id */
+    attempt_id: string;
+    window: TimeWindow;
+    /** Outcome */
+    outcome: string;
+    /** Error Type */
+    error_type: string | null;
+    /** Stages */
+    stages: ExecutionStage[];
+    /** Inputs */
+    inputs: ExecutionInput[];
+    /** Histories */
+    histories: RunHistory[];
+    /** Contexts */
+    contexts: ExecutionContext[];
+    /** Suggestions */
+    suggestions: ExecutionSuggestion[];
+    /** Decisions */
+    decisions: ExecutionDecision[];
+    /** Commit Status */
+    commit_status: string;
+    /** Processed */
+    processed: number | null;
+    /** Writes */
+    writes: RunWrite[];
+  };
+
+  type RunExecutionsResponse = {
+    /** Items */
+    items: RunExecution[];
+    /** Available */
+    available: boolean;
+    /** Total */
+    total: number;
+    /** Next Offset */
+    next_offset: number | null;
+  };
+
+  type RunHistory = {
+    /** Metadata */
+    metadata: Record<string, any>;
+    /** Candidates */
+    candidates: Record<string, any>[];
+  };
+
   type RunListResponse = {
     /** Items */
     items: RunResponse[];
@@ -769,6 +823,13 @@ declare namespace API {
     error: string | null;
     /** Cycles */
     cycles: CycleResponse[];
+  };
+
+  type RunWrite = {
+    /** Event Id */
+    event_id: string | null;
+    /** Action */
+    action: string | null;
   };
 
   type ScheduleListResponse = {

@@ -61,6 +61,28 @@ class AttemptRepository:
                                      (uid, stream, attempt_id))
         return self.decode(rows[0]) if rows else None
 
+    def list_for_run_window(self, uid, stream, run_id, window_index, offset=0, limit=10):
+        """按任务及窗口分页，先取轻量身份，避免对大阶段正文排序。"""
+        with self.connection() as store:
+            present, _ = store._execute("SELECT 1 AS present FROM information_schema.tables "
+                "WHERE table_schema=DATABASE() AND table_name='processing_attempts'")
+            if not present:
+                return dict(available=False, items=[], total=0)
+            args = (uid, stream, run_id, window_index)
+            counts, _ = store._execute("SELECT COUNT(*) AS total FROM processing_attempts "
+                "WHERE uid=%s AND stream=%s AND run_id=%s AND window_index=%s", args)
+            heads, _ = store._execute("SELECT attempt_id FROM processing_attempts "
+                "WHERE uid=%s AND stream=%s AND run_id=%s AND window_index=%s "
+                "ORDER BY created_at DESC,attempt_id DESC LIMIT %s OFFSET %s", (*args, limit, offset))
+            ids = [row['attempt_id'] for row in heads]
+            rows = []
+            if ids:
+                rows, _ = store._execute("SELECT * FROM processing_attempts WHERE uid=%s AND stream=%s "
+                    "AND run_id=%s AND window_index=%s AND attempt_id IN (" + ','.join(['%s'] * len(ids)) + ')',
+                    (*args, *ids))
+        by_id = {row['attempt_id']: self.decode(row) for row in rows}
+        return dict(available=True, items=[by_id[key] for key in ids if key in by_id], total=counts[0]['total'])
+
     def list_for_event_changes(self, uid, stream, event_id, revision_attempt_ids=(), offset=0, limit=20):
         """仅投影当前事件关联执行；先筛关联及重试链，再分页读取大 JSON。"""
         patterns = event_link_patterns(event_id)
