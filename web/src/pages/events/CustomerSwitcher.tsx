@@ -1,6 +1,7 @@
 import * as Popover from '@radix-ui/react-popover';
 import { Check, ChevronDown, Crown, Search, UsersRound } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { savedEventCount } from '@/lib/customerEvents';
 
 export type CustomerTierFilter = 'all' | 'super_large' | 'large' | 'active';
 
@@ -62,7 +63,8 @@ function sortCustomers(items: API.CustomerResponse[]): API.CustomerResponse[] {
     if (superDiff !== 0) return superDiff;
     const levelDiff = levelNumber(right) - levelNumber(left);
     if (levelDiff !== 0) return levelDiff;
-    const eventDiff = (right.event_count ?? 0) - (left.event_count ?? 0);
+    const eventDiff =
+      (savedEventCount(right) ?? 0) - (savedEventCount(left) ?? 0);
     if (eventDiff !== 0) return eventDiff;
     return left.uid.localeCompare(right.uid);
   });
@@ -77,7 +79,7 @@ export function CustomerSwitcher({
   uid: string;
   customers: API.CustomerResponse[];
   current?: API.CustomerResponse;
-  onSelect: (nextUid: string, stream?: string) => void;
+  onSelect: (nextUid: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [keyword, setKeyword] = useState('');
@@ -96,13 +98,7 @@ export function CustomerSwitcher({
   const currentBadge = !isAll ? customerTierBadge(current) : null;
 
   function choose(nextUid: string) {
-    if (nextUid === 'all') {
-      onSelect('all', '');
-      setOpen(false);
-      return;
-    }
-    const target = customers.find((item) => item.uid === nextUid);
-    onSelect(nextUid, target?.stream || '');
+    onSelect(nextUid);
     setOpen(false);
   }
 

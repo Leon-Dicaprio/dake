@@ -8,6 +8,7 @@ from ..dependencies import AppServices, services
 from ..schemas import (
     ConfigResponse,
     EventChangesResponse,
+    EventContextResponse,
     EventListResponse,
     EventResponse,
     ManualDecisionRequest,
@@ -46,6 +47,29 @@ def get_event(deps: Deps, event_id: str = Path(min_length=1, max_length=64),
     if event is None:
         raise HTTPException(status_code=404, detail="该客户下未找到事件")
     return event
+
+
+@router.get(
+    "/events/{event_id}/context",
+    response_model=EventContextResponse,
+    operation_id="get_event_context",
+    tags=["events"],
+)
+def get_event_context(
+    deps: Deps,
+    event_id: str = Path(min_length=1, max_length=64),
+    uid: str | None = Query(default=None, max_length=128),
+    stream: str | None = Query(default=None, max_length=128),
+    padding_minutes: int = Query(default=15, ge=1, le=120),
+    limit: int = Query(default=80, ge=1, le=200),
+):
+    """按需读取事件所在群聊前后邻近消息，辅助核对前置参数、日志或配图。"""
+    result = deps.queries.event_context(
+        event_id, uid=uid, stream=stream, padding_minutes=padding_minutes, limit=limit
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="该客户下未找到事件")
+    return result
 
 
 @router.get("/events/{event_id}/changes", response_model=EventChangesResponse, operation_id="get_event_changes", tags=["events"])

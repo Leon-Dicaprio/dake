@@ -23,6 +23,33 @@ _UUID = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
 _EVENT_REF = re.compile(r"\bevent_id\s*[:=]\s*(" + _UUID + r")(?![\w-])")
 _MESSAGE_REF = re.compile(r"\bmessage_id\s*[:=]\s*([a-zA-Z][a-zA-Z0-9_]*:[a-zA-Z0-9_.-]+)")
 _WORDS = re.compile(r"[\u3400-\u9fff]+|[a-zA-Z0-9][a-zA-Z0-9_.-]*")
+SAME_GROUP_RECALL_WINDOW = timedelta(hours=24)
+ACTIVE_CONTINUITY_RECALL_WINDOW = timedelta(hours=6)
+
+
+def _event_conversation_ids(event: Event) -> set[str]:
+    """从快照已保存的证据及引用元数据提取关联群号，不额外回查消息表。"""
+    convs: set[str] = set()
+    for item in event.evidence or []:
+        cid = item.get("conversation_id") if isinstance(item, dict) else None
+        if cid:
+            convs.add(cid)
+    for facts in (event.type_evidence or {}).values():
+        for fact in facts or []:
+            for ref in (fact.get("evidence_refs") or []) if isinstance(fact, dict) else []:
+                if ref.get("conversation_id"):
+                    convs.add(ref["conversation_id"])
+    for detail in (event.status_detail, event.priority_detail):
+        if isinstance(detail, dict):
+            for ref in detail.get("evidence_refs") or []:
+                if isinstance(ref, dict) and ref.get("conversation_id"):
+                    convs.add(ref["conversation_id"])
+    for cont in (event.recovery, event.recurrence_of):
+        if isinstance(cont, dict):
+            for ref in cont.get("evidence") or []:
+                if isinstance(ref, dict) and ref.get("conversation_id"):
+                    convs.add(ref["conversation_id"])
+    return convs
 
 
 def _clues(messages, limits):
@@ -133,6 +160,8 @@ class HistoryRetriever:
             return result
         event_refs, message_refs, keywords, result.clues_limited = _clues(messages, self.limits)
         recent_start = before - timedelta(days=self.limits.recent_days)
+        earliest_new = min(message.sent_at for message in messages)
+        active_convs = {message.conversation_id for message in messages if message.conversation_id}
         matches, seen = [], set()
 
         def consume(heads):
@@ -178,14 +207,31 @@ class HistoryRetriever:
                 hits = [word for word in keywords if word in text]
                 exact_event = event.event_id in event_refs
                 exact_message = any(key in evidence_ids for key in message_refs)
-                if not (exact_event or exact_message or hits):
+                gap = earliest_new - event.end_time
+                event_convs = _event_conversation_ids(event)
+                same_group_recent = bool(
+                    active_convs
+                    and event_convs.intersection(active_convs)
+                    and timedelta(0) <= gap <= SAME_GROUP_RECALL_WINDOW
+                )
+                active_continuity = bool(
+                    event.closed_at is None
+                    and event.lifecycle_status not in {"已解决", "已取消"}
+                    and timedelta(0) <= gap <= ACTIVE_CONTINUITY_RECALL_WINDOW
+                )
+                if not (exact_event or exact_message or hits or same_group_recent or active_continuity):
                     continue
                 reasons = (["exact_event_id"] if exact_event else []) + (["exact_message_key"] if exact_message else [])
                 reasons += ["keyword:" + word for word in hits]
+                if same_group_recent:
+                    reasons.append("same_group_recent")
+                if active_continuity:
+                    reasons.append("active_continuity")
                 reasons.append("recent" if event.end_time >= recent_start else "older")
-                # 关闭与未关闭只影响候选排序，不在这里认定恢复、持续或复发。
+                # 精确与词法命中优先，其后保底纳入同群近期及近场未完结事项，避免口语指代漏召回。
                 rank = (-int(exact_event), -int(exact_message), event.end_time < recent_start,
-                        -len(hits), event.closed_at is not None, -event.end_time.timestamp(), event.event_id)
+                        -len(hits), -int(same_group_recent), event.closed_at is not None,
+                        -event.end_time.timestamp(), event.event_id)
                 event = deepcopy(event)
                 event.attributes, event.extensions, event.updated_by = {}, {}, []
                 # 显式命中的引用优先保留；同消息的多个版本仅输出一次引用。

@@ -2,6 +2,7 @@
 
 from contextlib import contextmanager
 from datetime import timedelta
+import json
 from threading import Event as ThreadEvent, Thread
 from uuid import uuid4
 
@@ -66,6 +67,27 @@ def _request(settings, uid, start):
     request.update(message_source="stored", allowed_groups=["synthetic-group"], strict_window=True,
         phase="catchup", catchup_target=(start + timedelta(hours=1)).isoformat())
     return request
+
+
+def test_progress_rows_project_old_and_new_cycles_without_snapshots(explicit_isolation, tmp_path):
+    """批量进度保留旧周期和隔离计数，跳过缺失运行，不传回事件快照。"""
+    runs = RunRepository(explicit_isolation.settings(tmp_path))
+    uid = "synthetic-progress-" + uuid4().hex[:8]
+    rid = runs.create(dict(uid=uid, mode="official"), 2)["run_id"]
+    audit = [dict(kind="withheld", count=2, incomplete=True)]
+    cycles = [dict(processed=3, created=["synthetic-event"], filter_audit=audit, events=[{"summary": "合成摘要"}]),
+              dict(updated=["synthetic-event"])]
+    with runs.connection() as store:
+        store._execute("UPDATE processing_runs SET cycles=%s,completed_windows=2,status='succeeded' WHERE run_id=%s",
+                       (json.dumps(cycles), rid))
+    projected = runs.progress_rows([rid, rid, str(uuid4())], include_cycles=True)
+    assert set(projected) == {rid}
+    assert sorted(projected[rid]["cycles"], key=lambda c: -c["processed"]) == [
+        dict(processed=3, created=["synthetic-event"], updated=[], filter_audit=audit),
+        dict(processed=0, created=[], updated=["synthetic-event"], filter_audit=[])]
+    head = runs.progress_rows([rid])[rid]
+    assert head["completed_windows"] == head["total_windows"] == 2
+    assert "cycles" not in head and "request" not in head
 
 
 def _open_slots(runs):

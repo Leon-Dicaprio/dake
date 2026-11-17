@@ -43,6 +43,23 @@ class EvidenceResponse(APIModel):
     sender_kind: SenderKind = "unknown"
 
 
+class ContextMessageResponse(EvidenceResponse):
+    """事件所在群聊前后邻近的原始消息视图，标明是否属于该事件已采纳证据。"""
+
+    is_evidence: bool = False
+
+
+class EventContextResponse(APIModel):
+    """事件前后群聊上下文只读响应，严格限定在同客户及同群范围内。"""
+
+    uid: str
+    stream: str
+    event_id: str
+    window: TimeWindow
+    items: list[ContextMessageResponse] = Field(default_factory=list)
+    truncated: bool = False
+
+
 class ConversationRef(APIModel):
     """事件覆盖到的群聊，供列表和筛选展示，不改变事件身份。"""
 
@@ -469,6 +486,7 @@ class CustomerResponse(APIModel):
     label: str
     message_count: int
     event_count: int
+    archived_event_counts: dict[str, int] = Field(default_factory=dict, description="本客户历史分析版本的已保存事件数")
     stream: str
     level: str | None = None
     level_state: str = "unknown"

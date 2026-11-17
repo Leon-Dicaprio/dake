@@ -10,6 +10,7 @@ from ..analysis.contract import ContractError
 from ..analysis.summary_changes import (
     explicitly_corrects_typed_attribute,
     field_only_corrections,
+    prepare_summary,
     validate_changes,
 )
 from ..analysis.updates import apply_candidate, has_structured_change
@@ -332,25 +333,36 @@ def apply_attributions(
         if accepted:
             first, record, boundary = accepted[0]
             action = record["action"]
-            writable, field_corrections = (
-                _combine([c for c, _, _ in accepted], old, available, new_keys)
-                if action == "update"
-                else (first, {})
-            )
-            updated = apply_candidate(
-                writable,
-                old if action == "update" else None,
-                available,
-                result.uid,
-                result.stream,
-                result.window,
-                settings,
-                new_keys,
-                continuity=boundary,
-                field_corrections=field_corrections,
-                customer_profile=customer_profile,
-                sender_roles=sender_roles,
-            )
+            effective = accepted
+            if action == "update" and len(accepted) > 1:
+                effective = [
+                    (c, r, b)
+                    for c, r, b in accepted
+                    if c.changes is None
+                    or b is not None
+                    or has_structured_change(c, old, available, customer_profile=customer_profile)
+                    or bool(prepare_summary(c, old, available)[1])
+                ]
+            if effective:
+                writable, field_corrections = (
+                    _combine([c for c, _, _ in effective], old, available, new_keys)
+                    if action == "update"
+                    else (first, {})
+                )
+                updated = apply_candidate(
+                    writable,
+                    old if action == "update" else None,
+                    available,
+                    result.uid,
+                    result.stream,
+                    result.window,
+                    settings,
+                    new_keys,
+                    continuity=boundary,
+                    field_corrections=field_corrections,
+                    customer_profile=customer_profile,
+                    sender_roles=sender_roles,
+                )
             if updated is not None:
                 if recorder is not None:
                     updated.updated_by[-1].update(

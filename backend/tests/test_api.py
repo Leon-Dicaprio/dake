@@ -124,7 +124,7 @@ def test_openapi_has_named_operations_and_typed_models(api):
     client, _, _, _ = api
     schema = client.get("/openapi.json").json()
     operations = {item["operationId"] for path in schema["paths"].values() for item in path.values()}
-    assert operations == {"health", "get_config", "list_events", "get_event", "get_event_changes",
+    assert operations == {"health", "get_config", "list_events", "get_event", "get_event_context", "get_event_changes",
                           "submit_manual_decision", "get_manual_decision",
                           "list_runs", "get_run", "list_customer_profiles", "list_customer_groups",
                           "create_customer_sync", "list_customer_syncs", "get_customer_sync", "list_tasks", "create_task",

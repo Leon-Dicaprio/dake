@@ -387,6 +387,139 @@
         }
       }
     },
+    "/api/v1/events/{event_id}/context": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Get Event Context",
+        "description": "按需读取事件所在群聊前后邻近消息，辅助核对前置参数、日志或配图。",
+        "operationId": "get_event_context",
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "title": "Event Id"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
+          },
+          {
+            "name": "stream",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stream"
+            }
+          },
+          {
+            "name": "padding_minutes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 120,
+              "minimum": 1,
+              "default": 15,
+              "title": "Padding Minutes"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 80,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventContextResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
     "/api/v1/events/{event_id}/changes": {
       "get": {
         "tags": [
@@ -2279,6 +2412,131 @@
         "title": "ConfigResponse",
         "description": "界面可见配置；不返回数据库密码、连接串或内部取数响应。"
       },
+      "ContextMessageResponse": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "message_id": {
+            "type": "string",
+            "title": "Message Id"
+          },
+          "send_time": {
+            "type": "string",
+            "title": "Send Time"
+          },
+          "excerpt": {
+            "type": "string",
+            "title": "Excerpt"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Digest"
+          },
+          "platform": {
+            "type": "string",
+            "title": "Platform",
+            "default": ""
+          },
+          "platform_label": {
+            "type": "string",
+            "title": "Platform Label",
+            "default": ""
+          },
+          "conversation_id": {
+            "type": "string",
+            "title": "Conversation Id",
+            "default": ""
+          },
+          "conversation_name": {
+            "type": "string",
+            "title": "Conversation Name",
+            "default": ""
+          },
+          "sender_name": {
+            "type": "string",
+            "title": "Sender Name",
+            "default": ""
+          },
+          "internal_hint": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Internal Hint"
+          },
+          "sender_role": {
+            "type": "string",
+            "enum": [
+              "internal",
+              "support",
+              "customer",
+              "external",
+              "unknown"
+            ],
+            "title": "Sender Role",
+            "default": "unknown"
+          },
+          "sender_kind": {
+            "type": "string",
+            "enum": [
+              "human",
+              "bot",
+              "unknown"
+            ],
+            "title": "Sender Kind",
+            "default": "unknown"
+          },
+          "is_evidence": {
+            "type": "boolean",
+            "title": "Is Evidence",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "message_id",
+          "send_time",
+          "excerpt",
+          "content",
+          "digest",
+          "platform",
+          "platform_label",
+          "conversation_id",
+          "conversation_name",
+          "sender_name",
+          "internal_hint",
+          "sender_role",
+          "sender_kind",
+          "is_evidence"
+        ],
+        "title": "ContextMessageResponse",
+        "description": "事件所在群聊前后邻近的原始消息视图，标明是否属于该事件已采纳证据。"
+      },
       "ContinuityEvidence": {
         "properties": {
           "source": {
@@ -2692,6 +2950,14 @@
           "event_count": {
             "type": "integer",
             "title": "Event Count"
+          },
+          "archived_event_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Archived Event Counts",
+            "description": "本客户历史分析版本的已保存事件数"
           },
           "stream": {
             "type": "string",
@@ -3365,6 +3631,48 @@
         ],
         "title": "EventChangesResponse",
         "description": "只读变化面板；任务分页与事件版本分别提供，不伪造执行追踪。"
+      },
+      "EventContextResponse": {
+        "properties": {
+          "uid": {
+            "type": "string",
+            "title": "Uid"
+          },
+          "stream": {
+            "type": "string",
+            "title": "Stream"
+          },
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "window": {
+            "$ref": "#/components/schemas/TimeWindow"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ContextMessageResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "uid",
+          "stream",
+          "event_id",
+          "window",
+          "items",
+          "truncated"
+        ],
+        "title": "EventContextResponse",
+        "description": "事件前后群聊上下文只读响应，严格限定在同客户及同群范围内。"
       },
       "EventExecution": {
         "properties": {

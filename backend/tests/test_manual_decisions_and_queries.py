@@ -461,10 +461,7 @@ def test_mysql_persistence_roundtrip_manual_lock_and_review_flag_cap(tmp_path):
     from test_store import mysql_store as mysql_fixture
 
     gen = mysql_fixture.__wrapped__()
-    try:
-        store, uid, _other, options = next(gen)
-    except pytest.SkipTest as exc:
-        pytest.skip(str(exc))
+    store, uid, _other, options = next(gen)
 
     try:
         settings = replace(

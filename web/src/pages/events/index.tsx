@@ -10,6 +10,7 @@ import { eventDisplayLabels } from '@/components/EventType';
 import { EmptyState, ErrorNotice, LoadingRows } from '@/components/Feedback';
 import { Button } from '@/components/ui/button';
 import { useWorkspace } from '@/layouts/Workspace';
+import { savedEventScopes } from '@/lib/customerEvents';
 import { useResource } from '@/lib/useResource';
 import { formatTime } from '@/lib/utils';
 import { api } from '@/services/api';
@@ -63,9 +64,7 @@ export default function EventsPage() {
             event_count: 0,
           }
         : undefined);
-  const stream = isAllCustomers
-    ? ''
-    : params.get('stream') || customer?.stream || '';
+  const stream = isAllCustomers ? '' : params.get('stream') || '';
   const type = params.get('type') || '';
   const statusFilter = params.get('status') || '';
   const priorityFilter = params.get('priority') || '';
@@ -79,35 +78,29 @@ export default function EventsPage() {
     Boolean(startDate && endDate && startDate > endDate);
   const eventId = params.get('event') || '';
   const dismissed = useRef(false);
-  const targetCustomers = useMemo(
-    () =>
-      (workspace.data?.customers || []).filter(
-        (item) => item.event_count === undefined || item.event_count > 0,
-      ),
-    [workspace.data?.customers],
-  );
-  const eventsKey = isAllCustomers
-    ? workspace.data
-      ? `events:all:${type}:${statusFilter}:${priorityFilter}:${targetCustomers.map((item) => `${item.uid}:${item.stream}`).join(',')}`
-      : null
-    : customer
-      ? `events:${uid}:${stream}:${type}:${statusFilter}:${priorityFilter}`
+  const scopes = useMemo(() => {
+    if (isAllCustomers)
+      return (workspace.data?.customers || []).flatMap(savedEventScopes);
+    const scopedCustomer = customerMap.get(uid);
+    if (stream || !scopedCustomer) return [{ uid, stream }];
+    return savedEventScopes(scopedCustomer);
+  }, [isAllCustomers, workspace.data?.customers, customerMap, uid, stream]);
+  const eventsKey =
+    workspace.data && (isAllCustomers || customer)
+      ? JSON.stringify([
+          'events',
+          uid,
+          scopes,
+          type,
+          statusFilter,
+          priorityFilter,
+        ])
       : null;
   const events = useResource(
     eventsKey,
     async (signal) => {
-      if (!isAllCustomers) {
-        return api.events(
-          uid,
-          stream,
-          type,
-          signal,
-          statusFilter,
-          priorityFilter,
-        );
-      }
       const results = await Promise.all(
-        targetCustomers.map((item) =>
+        scopes.map((item) =>
           api.events(
             item.uid,
             item.stream,
@@ -118,11 +111,7 @@ export default function EventsPage() {
           ),
         ),
       );
-      const merged = results
-        .flatMap((result) => result.items)
-        .sort((left, right) =>
-          compareEventsByPriority(left, right, customerMap),
-        );
+      const merged = results.flatMap((result) => result.items);
       return { items: merged, total: merged.length };
     },
     5000,
@@ -197,14 +186,10 @@ export default function EventsPage() {
   const activeStream = isAllCustomers
     ? selected?.stream || customerMap.get(activeUid)?.stream || ''
     : stream;
-  const filtering = Boolean(
-    type || statusFilter || priorityFilter || group || range?.value,
-  );
-
-  function selectCustomer(nextUid: string, nextStream = '') {
+  function selectCustomer(nextUid: string) {
     update({
       uid: nextUid,
-      stream: nextStream,
+      stream: '',
       tier: '',
       event: '',
       group: '',
@@ -322,21 +307,19 @@ export default function EventsPage() {
               <h2>
                 事件列表 <span>{events.data ? visible.length : '—'}</span>
               </h2>
-              {Boolean(items.length || filtering) && (
-                <EventListFilters
-                  values={{
-                    type,
-                    status: statusFilter,
-                    priority: priorityFilter,
-                    group,
-                  }}
-                  types={typeOptions}
-                  statuses={statusOptions}
-                  priorities={priorityOptions}
-                  groups={groups}
-                  update={update}
-                />
-              )}
+              <EventListFilters
+                values={{
+                  type,
+                  status: statusFilter,
+                  priority: priorityFilter,
+                  group,
+                }}
+                types={typeOptions}
+                statuses={statusOptions}
+                priorities={priorityOptions}
+                groups={groups}
+                update={update}
+              />
             </div>
             <CustomerSwitcher
               uid={uid}

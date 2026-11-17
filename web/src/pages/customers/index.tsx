@@ -18,6 +18,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { useWorkspace } from '@/layouts/Workspace';
+import { savedEventCount } from '@/lib/customerEvents';
 import { useResource } from '@/lib/useResource';
 import { errorMessage, formatTime } from '@/lib/utils';
 import { api } from '@/services/api';
@@ -424,9 +425,9 @@ export default function CustomersPage() {
                           )?.message_count?.toLocaleString('zh-CN') ?? '—'}
                         </td>
                         <td>
-                          {customerInfo(item.uid)?.event_count?.toLocaleString(
-                            'zh-CN',
-                          ) ?? '—'}
+                          {savedEventCount(
+                            customerInfo(item.uid),
+                          )?.toLocaleString('zh-CN') ?? '—'}
                         </td>
                       </tr>
                     ))}
@@ -523,7 +524,7 @@ export default function CustomersPage() {
                   <div>
                     <dt>事件</dt>
                     <dd>
-                      {profile?.event_count?.toLocaleString('zh-CN') ?? '—'}
+                      {savedEventCount(profile)?.toLocaleString('zh-CN') ?? '—'}
                     </dd>
                   </div>
                 </dl>

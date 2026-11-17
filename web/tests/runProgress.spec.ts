@@ -303,21 +303,24 @@ test('事件页统一任务入口、自动更新事件数，并保留当前选�
   await page.goto('/events');
   const link = page.locator('.inbox-toolbar-actions a[href="/tasks"]');
   await expect(link).toContainText('任务中心');
-  await expect(page.locator('.heading-count')).toHaveText('1');
+  const listHeading = page.getByRole('heading', { name: /^事件列表/ });
+  await expect(listHeading).toHaveText(/事件列表\s*1$/);
   const selected = page.locator('.event-rows [aria-current=true]');
   await expect(selected).toContainText('synthetic-first');
   state.events.push(savedEvent('synthetic-second'));
-  await expect(page.locator('.heading-count')).toHaveText('2');
+  await expect(listHeading).toHaveText(/事件列表\s*2$/);
   await expect(selected).toContainText('synthetic-first');
   await expect(page.locator('.inbox-split')).toHaveCSS('display', 'grid');
   await page.setViewportSize({ width: 1024, height: 800 });
   await expect(link).toBeVisible();
-  const tops = await page
-    .locator('.inbox-filters select')
-    .evaluateAll((nodes) =>
-      nodes.map((node) => node.getBoundingClientRect().top),
-    );
-  expect(Math.max(...tops) - Math.min(...tops)).toBeLessThan(2);
+  await page.getByRole('button', { name: '筛选', exact: true }).click();
+  const filters = page.getByRole('dialog', { name: '筛选事件' });
+  await expect(filters).toBeInViewport({ ratio: 1 });
+  const fields = filters.getByRole('combobox');
+  await expect(fields).toHaveCount(4);
+  for (const field of await fields.all())
+    await expect(field).toBeInViewport({ ratio: 1 });
+  await page.keyboard.press('Escape');
   await link.click();
   await expect(page).toHaveURL(/\/tasks$/);
   expect(state.writes).toEqual([]);

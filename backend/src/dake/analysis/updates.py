@@ -216,11 +216,6 @@ def apply_candidate(
         )
         if not changes and not created and not structured_change:
             return None
-        if changes or structured_change:
-            used = _collect_supporting_keys(candidate, changes or [], available)
-            filtered_ids = [key for key in candidate.evidence_ids if available[key].key in used]
-            if filtered_ids:
-                candidate = replace(candidate, evidence_ids=filtered_ids)
         if changes:
             candidate = restrict_fields(candidate, event, changes, available)
         start, end = candidate_times(candidate, available)
@@ -527,13 +522,16 @@ def apply_candidate(
         message = available[key]
         identity = message.source, message.message_id, message.digest
         if identity not in known:
-            event.evidence.append(dict(
+            entry = dict(
                 source=message.source,
                 message_id=message.message_id,
                 send_time=message.sent_at.isoformat(),
                 excerpt=message.content[:160],
                 digest=message.digest,
-            ))
+            )
+            if message.conversation_id:
+                entry["conversation_id"] = message.conversation_id
+            event.evidence.append(entry)
             known.add(identity)
             added.append(message.message_id)
 

@@ -53,6 +53,9 @@ class MemoryTasks:
     def execution(self, eid):
         return deepcopy(self.history.get(eid))
 
+    def execution_heads(self, tid, *, limit=100):
+        return [{k: v for k, v in row.items() if k != "state"} for row in self.executions(tid)[:limit]]
+
     def start_execution(self, tid, state, automatic=False):
         if self.executions(tid, active=True):
             raise RunConflict()
@@ -77,6 +80,9 @@ class MemoryRuns:
 
     def get(self, rid, **kwargs):
         return deepcopy(self.items.get(rid))
+
+    def progress_rows(self, run_ids, *, include_cycles=False):
+        return {rid: deepcopy(self.items[rid]) for rid in run_ids if rid in self.items}
 
     def create(self, request, total, run_id=None):
         if run_id in self.items:

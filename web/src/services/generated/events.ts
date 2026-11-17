@@ -51,6 +51,26 @@ export async function getEventChanges(
   });
 }
 
+/** Get Event Context 按需读取事件所在群聊前后邻近消息，辅助核对前置参数、日志或配图。 GET /api/v1/events/${param0}/context */
+export async function getEventContext(
+  // 叠加生成的Param类型 (非body参数swagger默认没有生成对象)
+  params: API.getEventContextParams,
+  options?: { signal?: AbortSignal }
+) {
+  const { event_id: param0, ...queryParams } = params;
+  return request<API.EventContextResponse>(`/api/v1/events/${param0}/context`, {
+    method: "GET",
+    params: {
+      // padding_minutes has a default value: 15
+      padding_minutes: "15",
+      // limit has a default value: 80
+      limit: "80",
+      ...queryParams,
+    },
+    ...(options || {}),
+  });
+}
+
 /** Submit Manual Decision 对分类、状态、优先级或跟进人提交原子人工裁定与加解锁。 POST /api/v1/events/${param0}/manual-decisions */
 export async function submitManualDecision(
   // 叠加生成的Param类型 (非body参数swagger默认没有生成对象)

@@ -49,6 +49,39 @@ declare namespace API {
     customers: CustomerResponse[];
   };
 
+  type ContextMessageResponse = {
+    /** Source */
+    source: string;
+    /** Message Id */
+    message_id: string;
+    /** Send Time */
+    send_time: string;
+    /** Excerpt */
+    excerpt: string;
+    /** Content */
+    content: string | null;
+    /** Digest */
+    digest: string | null;
+    /** Platform */
+    platform: string;
+    /** Platform Label */
+    platform_label: string;
+    /** Conversation Id */
+    conversation_id: string;
+    /** Conversation Name */
+    conversation_name: string;
+    /** Sender Name */
+    sender_name: string;
+    /** Internal Hint */
+    internal_hint: number | null;
+    /** Sender Role */
+    sender_role: "internal" | "support" | "customer" | "external" | "unknown";
+    /** Sender Kind */
+    sender_kind: "human" | "bot" | "unknown";
+    /** Is Evidence */
+    is_evidence: boolean;
+  };
+
   type ContinuityEvidence = {
     /** Source */
     source: string;
@@ -179,6 +212,8 @@ declare namespace API {
     message_count: number;
     /** Event Count */
     event_count: number;
+    /** Archived Event Counts 本客户历史分析版本的已保存事件数 */
+    archived_event_counts?: Record<string, any>;
     /** Stream */
     stream: string;
     /** Level */
@@ -369,6 +404,20 @@ declare namespace API {
     execution_offset: number;
     /** Next Execution Offset */
     next_execution_offset: number | null;
+  };
+
+  type EventContextResponse = {
+    /** Uid */
+    uid: string;
+    /** Stream */
+    stream: string;
+    /** Event Id */
+    event_id: string;
+    window: TimeWindow;
+    /** Items */
+    items: ContextMessageResponse[];
+    /** Truncated */
+    truncated: boolean;
   };
 
   type EventExecution = {
@@ -833,6 +882,14 @@ declare namespace API {
     offset?: number;
     execution_offset?: number;
     include_details?: boolean;
+  };
+
+  type getEventContextParams = {
+    event_id: string;
+    uid?: string | null;
+    stream?: string | null;
+    padding_minutes?: number;
+    limit?: number;
   };
 
   type getEventParams = {

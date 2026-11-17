@@ -78,14 +78,14 @@ export default function TasksPage() {
   const task =
     items.find((t) => t.task_id === params.get('task')) || visible[0];
   const history = useResource(
-    task ? `task-history:${task.task_id}` : null,
+    task && tab === 'history' ? `task-history:${task.task_id}` : null,
     (signal) => api.taskExecutions(task?.task_id || '', signal),
     4000,
   );
   const executionId =
     params.get('execution') || task?.latest?.execution_id || '';
   const detail = useResource(
-    task && executionId
+    task && executionId && tab === 'progress'
       ? `task-execution:${task.task_id}:${executionId}`
       : null,
     (signal) => api.taskExecution(executionId, signal),
@@ -296,14 +296,19 @@ export default function TasksPage() {
                   <TabsTrigger value="history">执行记录</TabsTrigger>
                 </TabsList>
                 <TabsContent value="progress">
-                  {detail.error ? (
+                  {detail.error && (
                     <ErrorNotice
-                      message={detail.error}
+                      message={
+                        execution
+                          ? `刷新进度失败，当前显示上次结果。${detail.error}`
+                          : detail.error
+                      }
                       retry={detail.refresh}
                     />
-                  ) : execution ? (
+                  )}
+                  {execution ? (
                     <ExecutionProgress execution={execution} />
-                  ) : executionId && detail.loading ? (
+                  ) : detail.error ? null : executionId && detail.loading ? (
                     <LoadingRows />
                   ) : (
                     <EmptyState

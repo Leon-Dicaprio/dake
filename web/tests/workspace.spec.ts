@@ -2,10 +2,13 @@ import { expect, type Page, test } from '@playwright/test';
 
 const stamp = '2038-06-01T09:00:00+08:00';
 /** 自造数据验证交互，写请求全部拦截。 */
-async function fixture(page: Page, initiallyEmpty = false) {
+async function fixture(page: Page, initiallyEmpty = false, historical = false) {
   const writes: Record<string, unknown>[] = [];
   let fail = false;
   let hasEvents = !initiallyEmpty;
+  const archive = 'xhub-v1-aaaaaaaaaaaaaaaaaaaa';
+  const savedStream = (uid: string) =>
+    historical && uid === '1383603926' ? archive : `stream-${uid}`;
   const message = {
     source: 'synthetic',
     message_id: 'm1',
@@ -21,7 +24,7 @@ async function fixture(page: Page, initiallyEmpty = false) {
     return {
       event_id: id,
       uid,
-      stream: `stream-${uid}`,
+      stream: savedStream(uid),
       topic_key: `测试事项${id}`,
       type: '排障',
       summary: `测试摘要${id}`,
@@ -79,7 +82,9 @@ async function fixture(page: Page, initiallyEmpty = false) {
               label: '测试客户1383603926',
               stream: 'stream-1383603926',
               message_count: 10,
-              event_count: hasEvents ? 2 : 0,
+              event_count: hasEvents && !historical ? 2 : 0,
+              archived_event_counts:
+                hasEvents && historical ? { [archive]: 2 } : {},
               level: 'L9',
               level_state: 'fresh',
               segment: 'large',
@@ -107,11 +112,13 @@ async function fixture(page: Page, initiallyEmpty = false) {
       });
     if (url.pathname.endsWith('/events')) {
       const uid = url.searchParams.get('uid') || '';
-      const items = !hasEvents
-        ? []
-        : uid === '555002'
-          ? [event('C', uid)]
-          : [event('A', uid), event('B', uid)];
+      const items =
+        !hasEvents ||
+        (historical && url.searchParams.get('stream') !== savedStream(uid))
+          ? []
+          : uid === '555002'
+            ? [event('C', uid)]
+            : [event('A', uid), event('B', uid)];
       return route.fulfill({ json: { items, total: items.length } });
     }
     if (url.pathname.endsWith('/runs'))
@@ -138,6 +145,23 @@ test('首次产出事件后，全部客户工作台在下次刷新中展示', as
   await expect(page.locator('.event-rows > li')).toHaveCount(3, {
     timeout: 8000,
   });
+  expect(state.writes).toEqual([]);
+});
+
+test('当前与历史事件都可查看，旧版本仅供核对', async ({ page }) => {
+  const state = await fixture(page, false, true);
+  await page.goto('/events');
+  await expect(page.locator('.event-rows > li')).toHaveCount(3);
+  await page.getByRole('button', { name: /测试事项A/ }).click();
+  await expect(
+    page.getByText('历史分析 · 只读', { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: '人工纠偏' })).toHaveCount(0);
+  await page.getByRole('button', { name: '只看该客户' }).click();
+  await expect(page.locator('.event-rows > li')).toHaveCount(2);
+  await page.getByLabel('客户范围').selectOption('555002');
+  await expect(page.locator('.event-chat-title')).toHaveText('测试事项C');
+  await expect(page.getByRole('button', { name: '人工纠偏' })).toBeVisible();
   expect(state.writes).toEqual([]);
 });
 test('切换、搜索、原文定位与客户隔离', async ({ page }) => {

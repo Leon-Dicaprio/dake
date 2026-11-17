@@ -98,6 +98,14 @@ class TaskRepository(RunRepository):
             rows, _ = store._execute("SELECT * FROM task_executions WHERE execution_id=%s", (execution_id,))
         return record(rows[0]) if rows else None
 
+    def execution_heads(self, task_id, *, limit=100):
+        """任务列表和执行记录只读取标题行，不加载整轮编排状态。"""
+        with self.connection() as store:
+            rows, _ = store._execute(
+                "SELECT execution_id,task_id,status,stage,created_at,finished_at FROM task_executions "
+                "WHERE task_id=%s ORDER BY created_at DESC LIMIT %s", (task_id, limit))
+        return [record(row) for row in rows]
+
     def start_execution(self, task_id, state, *, automatic=False):
         execution_id = str(uuid4())
         with self.locked(task_id) as store:

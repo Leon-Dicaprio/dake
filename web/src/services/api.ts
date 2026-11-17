@@ -8,6 +8,7 @@ import {
 } from './generated/customers';
 import {
   getEventChanges,
+  getEventContext,
   getManualDecision,
   listEvents,
   submitManualDecision,
@@ -81,6 +82,22 @@ export const api = {
         type: type || undefined,
         status: status || undefined,
         priority: priority || undefined,
+      },
+      { signal },
+    ),
+  eventContext: (
+    eventId: string,
+    uid: string,
+    stream: string,
+    signal?: AbortSignal,
+    paddingMinutes = 15,
+  ) =>
+    getEventContext(
+      {
+        event_id: eventId,
+        uid,
+        stream: stream || undefined,
+        padding_minutes: paddingMinutes,
       },
       { signal },
     ),
