@@ -1,6 +1,6 @@
 """官方聊天适配与私有原始缓存；只转换消息，不负责事件分类。"""
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import json
 import os
 from pathlib import Path
@@ -38,7 +38,11 @@ class ChatRecordsAdapter:
             raise AdapterError("响应顶层必须是对象")
         if type(payload.get("code")) is not int or payload["code"] != 0:
             raise AdapterError("响应业务状态不是成功")
-        if payload.get("uid") != uid or payload.get("start") != start.isoformat() or payload.get("end") != end.isoformat():
+        dates = (payload.get("start"), payload.get("end"))
+        expected_dates = (start.isoformat(), end.isoformat())
+        # 接口也回显完整日的左闭右开零点边界；只兼容已核实的成对格式。
+        expected_bounds = (start.isoformat() + " 00:00:00", (end + timedelta(days=1)).isoformat() + " 00:00:00")
+        if payload.get("uid") != uid or dates not in (expected_dates, expected_bounds):
             raise AdapterError("响应客户或日期范围与请求不一致")
         groups = payload.get("groups")
         if not isinstance(groups, list):

@@ -255,3 +255,22 @@ def test_no_redirect_handler_and_no_alternative_endpoint():
     assert _NoRedirect().redirect_request(None, None, 302, "", {}, "https://example.invalid") is None
     with pytest.raises(ValueError):
         ChatRecordsClient("http://127.0.0.1/qq/messages")
+
+
+def test_midnight_response_bounds_match_inclusive_requested_days():
+    raw = payload([record("501", time="2026-11-08 09:00:00")])
+    raw.update(start="2026-11-08 00:00:00", end="2026-11-09 00:00:00")
+    assert len(normalize(raw)) == 1
+
+
+@pytest.mark.parametrize("start,end", [
+    ("2026-11-08", "2026-11-09 00:00:00"),
+    ("2026-11-08 00:00:00", "2026-11-08"),
+    ("2026-11-08 01:00:00", "2026-11-09 00:00:00"),
+    ("2026-11-08 00:00:00", "2026-11-10 00:00:00"),
+])
+def test_mixed_partial_or_wider_midnight_bounds_are_rejected(start,end):
+    raw = payload([])
+    raw.update(start=start,end=end)
+    with pytest.raises(AdapterError):
+        normalize(raw)
