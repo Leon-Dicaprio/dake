@@ -175,6 +175,8 @@ class CycleResult:
     filter_audit: list[dict] = field(default_factory=list)
     attempt_id: str | None = None
     recovered_from_attempt_id: str | None = None
+    snapshot_scope: str = "customer"
+    event_count: int | None = None
 
     def to_dict(self) -> dict:
         """导出周期结果；可能含证据，仅保存在 data/ 内。"""

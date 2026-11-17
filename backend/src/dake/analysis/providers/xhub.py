@@ -4,6 +4,7 @@ from ...services.sender_kinds import BOT_POLICY, FILTER_VERSION, kinds_fingerpri
 from ...services.sender_identity import confirmed_sender_role
 from ...services.history_retrieval import HISTORY_POLICY
 from ...services.history_context import CONTEXT_POLICY
+from ..group_matching import GROUP_POLICY
 
 from dataclasses import asdict, dataclass, field
 from copy import deepcopy
@@ -152,6 +153,9 @@ class XHubProvider:
         # 当前窗口的未来边界由公共增量服务保证；迟到新增消息可以早于已处理上下文。
         history = self.history_retrieval
         if history is not None:
+            if history.conversation is not None and any(
+                    (m.source, m.conversation_id) != history.conversation for m in all_messages):
+                raise XHubError("同群分析输入不能混入其他群消息")
             if (tuple((m.key, m.digest) for m in new_messages) != history.input_versions
                     or any(m.sent_at >= history.before for m in all_messages)
                     or {e.event_id for e in events} != {e.event_id for e in history.events}):
@@ -258,7 +262,8 @@ class XHubProvider:
                        messages=[{"role": "system", "content": self.prompt + BOT_POLICY +
                                   (HISTORY_POLICY if self.history_retrieval is not None else "") +
                                   (CONTEXT_POLICY if getattr(self, "history_context", None) is not None else "") +
-                                  (ATTRIBUTION_POLICY if self.history_retrieval is not None else "") + "\n输出 JSON Schema：\n" +
+                                  (ATTRIBUTION_POLICY if self.history_retrieval is not None else "") +
+                                  (GROUP_POLICY if self.settings.group_matching_enabled else "") + "\n输出 JSON Schema：\n" +
                                   json.dumps(self.schema, ensure_ascii=False)},
                                  {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}, *repair],
                        response_format=response_format, max_tokens=self.config.max_tokens, stream=False)

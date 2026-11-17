@@ -12,6 +12,7 @@ from ..bootstrap import build_service
 from ..analysis.providers.xhub import XHubError, XHubTransientError, configured_stream
 from ..ingestion.client import TransientChatRecordsError
 from ..analysis.attribution import attribution_version
+from ..analysis.group_matching import group_matching_version
 from ..config import API_MAX_RANGE_DAYS, API_MAX_WINDOWS, HistoryContextSettings, HistoryRetrievalSettings, bound, duration
 from ..domain.models import parse_time, windows
 from ..ingestion.client import validate_uid
@@ -60,6 +61,8 @@ def prepare_request(settings, values: dict) -> tuple[dict, int]:
                 ingest_lookback=duration_label(settings.ingest_lookback),
                 history_retrieval=asdict(settings.history_retrieval),
                 history_context=asdict(settings.history_context),
+                **(dict(group_matching_enabled=True, group_batch_chars=settings.group_batch_chars,
+                        group_matching_version=group_matching_version()) if settings.group_matching_enabled else {}),
                 attribution_version=attribution_version() if settings.provider == "xhub" else None,
                 default_status=settings.default_status, default_severity=settings.default_severity,
                 closed_statuses=list(settings.closed_statuses),
@@ -189,6 +192,8 @@ class RunRunner:
         request = run["request"]
         settings = replace(self.settings, uid=request["uid"], start=parse_time(request.get("business_start", request["start"])),
                            chat_retries=0 if request.get("schedule_id") else self.settings.chat_retries,
+                           group_matching_enabled=request.get("group_matching_enabled", False),
+                           group_batch_chars=request.get("group_batch_chars", 16000),
                            provider=request.get("provider", "stub"),
                            llm_model=request.get("llm_model") or self.settings.llm_model,
                            llm_max_tokens=request.get("llm_max_tokens") or self.settings.llm_max_tokens,
@@ -208,6 +213,8 @@ class RunRunner:
         try:
             if request["mode"] != "official":
                 raise ValueError("该运行模式已移除")
+            if settings.group_matching_enabled and request.get("group_matching_version") != group_matching_version():
+                raise XHubError("本群归属策略已变化，请重新提交任务")
             if (request["mode"] == "official" and settings.provider == "xhub"
                     and request.get("attribution_version") != attribution_version()):
                 raise XHubError("增量归属策略已变化，请重新提交任务；原分析范围及已处理消息保持不变")
@@ -237,8 +244,9 @@ class RunRunner:
                                 (prior.get("analysis_stream") is not None and
                                  prior["analysis_stream"] != request.get("analysis_stream"))):
                             interrupted = None
-                    baseline = {event.event_id: len(event.updated_by)
-                                for event in service.store.list_events(settings.uid, service.stream)}
+                    baseline = (service.store.event_revision_counts(settings.uid, service.stream)
+                        if settings.group_matching_enabled else {event.event_id: len(event.updated_by)
+                            for event in service.store.list_events(settings.uid, service.stream)})
                     self.repository.begin_window(run["run_id"], self.runner_id, window_value, baseline)
                     if interrupted and service.attempts is not None and not request.get("schedule_id"):
                         previous = service.attempts.for_run_window(settings.uid, service.stream,

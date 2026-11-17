@@ -72,6 +72,7 @@ def apply_candidate(candidate, event, available, uid, stream, window: Window, se
         identity = message.source, message.message_id, message.digest
         if identity not in known:
             event.evidence.append(dict(source=message.source, message_id=message.message_id,
+                                       conversation_id=message.conversation_id,
                                        send_time=message.sent_at.isoformat(), excerpt=message.content[:160],
                                        digest=message.digest))
             known.add(identity)

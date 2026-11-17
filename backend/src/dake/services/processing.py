@@ -63,7 +63,6 @@ class IncrementalService:
         # 官方接口只有日期精度；回查近期日期，容纳晚于发送时间入库的消息。
         kinds = load_sender_kinds(self.settings.data_dir)
         roles = load_sender_roles(self.settings.data_dir)
-        fingerprint = kinds_fingerprint(kinds)
         fetch_start = max(self.settings.start, window.start - self.settings.ingest_lookback)
         messages = self.ingestion.load_window(uid, fetch_start, window.end)
         result = CycleResult(uid, self.stream, window)
@@ -74,144 +73,48 @@ class IncrementalService:
             result.ingested = self.store.upsert_messages(messages)
             # 用已处理摘要找新增；只比较最大时间会漏掉较早时间的迟到消息。
             pending = self.store.pending_messages(uid, self.settings.start, window.end, self.stream)
-            events = self.store.list_events(uid, self.stream)
-            if pending and any(
+            events = [] if self.settings.group_matching_enabled else self.store.list_events(uid, self.stream)
+            future = self.store.has_future_event_revision(uid, self.stream, window.end) if pending and self.settings.group_matching_enabled else False
+            if pending and (future or any(
                 parse_time(revision["window_end"]) > window.end
                 for event in events for revision in event.updated_by
-            ):
+            )):
                 raise ValueError("该处理流已有更晚的事件；请在当前窗口处理迟到消息，或使用新的分析版本回放")
             context_start = max(self.settings.start, window.start - self.settings.context_lookback)
             context = self.store.context_messages(uid, context_start, window.end)
             pending_keys = {message.key for message in pending}
             context = [message for message in context if message.key not in pending_keys]
-            bot_pending = [m for m in pending if sender_kind(m.to_dict(), kinds) == "bot"]
-            bot_keys = {m.key for m in bot_pending}
-            eligible = [m for m in pending if m.key not in bot_keys]
-            auxiliary = context + bot_pending
-            if recorder is not None:
-                recorder.input(pending, eligible, auxiliary)
-            if observer is not None:
-                observe("input", pending=[m.to_dict() | {"key": m.key, "digest": m.digest} for m in pending],
-                        context=[m.to_dict() | {"key": m.key, "digest": m.digest} for m in auxiliary])
-            configure = getattr(self.provider, "configure_sender_kinds", None)
-            if configure is not None:
-                configure(kinds)
-            configure_roles = getattr(self.provider, "configure_sender_roles", None)
-            if configure_roles is not None:
-                configure_roles(roles)
-            candidates = []
-            history, background = None, None
-            if eligible:
-                # 历史候选和补取背景限定本轮可引用的旧事件，明确决定不再按主题预合并。
-                history = self.history_retriever.retrieve(uid, self.stream, eligible, window.end)
-                if recorder is not None:
-                    recorder.record("history", candidates=[c.to_input() for c in history.candidates], metadata=history.metadata())
-                if observer is not None:
-                    observe("history", candidates=[c.to_input() for c in history.candidates],
-                            metadata=history.metadata())
-                configure_history = getattr(self.provider, "configure_history_retrieval", None)
-                if configure_history is not None:
-                    configure_history(history)
-                configure_context = getattr(self.provider, "configure_history_context", None)
-                if configure_context is not None:
-                    # 补取结果走独立只读输入，不加入 pending、available 或事件写入证据。
-                    background = self.history_context.retrieve(history, eligible, auxiliary, events, kinds)
-                    configure_context(background)
-                if recorder is not None:
-                    recorder.record("history_context", "completed" if background is not None else "skipped",
-                                    result=background.to_input() if background is not None else None)
-                    recorder.record("extraction", "started")
-                    if not hasattr(self.provider, "configure_execution_observer"):
-                        recorder.record("provider_input", new_messages=[m.to_dict() | {"digest": m.digest} for m in eligible],
-                            context_messages=[m.to_dict() | {"digest": m.digest} for m in auxiliary])
-                configure_validator = getattr(self.provider, "configure_candidate_validator", None)
-                if configure_validator is not None:
-                    def validate_proposals(proposals):
-                        available = validate_candidates(proposals, pending, context)
-                        human_keys = {m.key for m in eligible}
-                        accepted = [c for c in proposals if human_keys.intersection(c.evidence_ids)]
-                        preflight_attributions(accepted, events=events, visible_events=history.events,
-                            available=available, pending=pending, eligible=eligible, background=background,
-                            result=result, settings=self.settings,
-                            customer_keys={m.key for m in eligible
-                                if confirmed_sender_role(m.to_dict(), roles) == "customer"})
-                    configure_validator(validate_proposals)
-                try:
-                    candidates = self.provider.extract(eligible, auxiliary, history.events)
-                finally:
-                    if configure_validator is not None:
-                        configure_validator(None)
-            if recorder is not None:
-                if not eligible:
-                    for stage in ("history", "history_context", "extraction"):
-                        recorder.record(stage, "skipped", reason="no_eligible_new_messages")
-                recorder.extracted(candidates)
-            if observer is not None:
-                observe("extracted", candidates=[asdict(c) for c in candidates])
-            available = validate_candidates(candidates, pending, context)
-            eligible_keys = {m.key for m in eligible}
-            accepted = []
-            for candidate in candidates:
-                if any(available[key].key in eligible_keys for key in candidate.evidence_ids):
-                    accepted.append(candidate)
-                else:
-                    result.filter_audit.append(dict(
-                        reason="bot_only_candidate", message_keys=[available[key].key for key in candidate.evidence_ids],
-                        policy_version=FILTER_VERSION, identity_config_hash=fingerprint))
-            candidates = accepted
-            pending_keys = eligible_keys
-            for message in bot_pending:
-                result.filter_audit.append(dict(
-                    reason="confirmed_bot_auxiliary_only" if eligible else "confirmed_bot_without_new_discussion",
-                    message_keys=[message.key], policy_version=FILTER_VERSION, identity_config_hash=fingerprint))
             blocked = set()
-            explicit = any(candidate.decision is not None for candidate in candidates)
-            if explicit:
-                if any(candidate.decision is None for candidate in candidates):
-                    raise ValueError("同一批候选不能混用明确归属和旧匹配规则")
-                events = apply_attributions(candidates, store=self.store, events=events,
-                    visible_events=history.events, available=available, pending=pending, eligible=eligible,
-                    background=background, result=result, settings=self.settings, observe=observe,
-                    customer_keys={m.key for m in eligible if confirmed_sender_role(m.to_dict(), roles) == "customer"},
-                    recorder=recorder)
-            # 未声明归属的可替换 Provider 使用主题匹配，正式 XHub 统一返回明确归属。
-            for candidate in merge_batch([] if explicit else candidates, available, self.settings.match_window, pending_keys,
-                                         self.settings.closed_statuses,
-                                         {(e.type, e.topic_key) for e in events if e.closed_at is not None}):
-                old, possible_ids, uncertain = match(candidate, events, available, self.settings, pending_keys)
-                if uncertain:
-                    blocked.update(available[key].key for key in candidate.evidence_ids)
-                    result.review.append(dict(
-                        review_flag=REVIEW, type=candidate.type,
-                        message_ids=[available[key].message_id for key in candidate.evidence_ids],
-                        possible_event_ids=possible_ids,
-                        reason="主题或指代不明确，保留待复核，不自动新建或合并",
-                    ))
-                    if observer is not None or recorder is not None:
-                        observe("decision", candidate=asdict(candidate), action="review", event_id=None,
-                                possible_event_ids=possible_ids, reason=result.review[-1]["reason"],
-                                before=None, after=None)
-                    continue
-                updated = apply_candidate(candidate, old, available, uid, self.stream, window, self.settings, pending_keys)
-                if recorder is not None and updated is not None:
-                    updated.updated_by[-1]["attempt_id"] = recorder.attempt_id
-                if observer is not None or recorder is not None:
-                    observe("decision", candidate=asdict(candidate),
-                            action="no_change" if updated is None else "created" if old is None else "updated",
-                            event_id=updated.event_id if updated else old.event_id if old else None,
-                            possible_event_ids=[], reason=None,
-                            before=old.to_dict() if old else None,
-                            after=updated.to_dict() if updated else old.to_dict() if old else None)
-                if updated is None:
-                    continue
-                self.store.save_event(updated)
-                if old is None:
-                    events.append(updated)
-                    result.created.append(updated.event_id)
-                else:
-                    events = [updated if event.event_id == updated.event_id else event for event in events]
-                    if updated.event_id not in result.updated:
-                        result.updated.append(updated.event_id)
+            if self.settings.group_matching_enabled:
+                groups = {}
+                for message in pending:
+                    if not message.conversation_id:
+                        result.review.append(dict(review_flag=REVIEW, type=None,
+                            message_ids=[message.message_id], possible_event_ids=[],
+                            reason="缺少稳定群 ID，不能进行本群事件匹配"))
+                        continue
+                    groups.setdefault((message.source, message.conversation_id), []).append(message)
+                for scope, batch in groups.items():
+                    group_context = [m for m in context if (m.source, m.conversation_id) == scope]
+                    chunks, current, size = [], [], 0
+                    for message in batch:
+                        cost = len(message.content) + 256
+                        if current and size + cost > self.settings.group_batch_chars:
+                            chunks.append(current)
+                            current, size = [], 0
+                        current.append(message)
+                        size += cost
+                    if current:
+                        chunks.append(current)
+                    previous = []
+                    for chunk in chunks:
+                        events, held = self._analyze_batch(uid, window, chunk, group_context + previous, events,
+                            result, kinds, roles, observe, recorder, observer)
+                        blocked.update(held)
+                        previous.extend(chunk)
+            else:
+                events, blocked = self._analyze_batch(uid, window, pending, context, events,
+                    result, kinds, roles, observe, recorder, observer)
             completed = [message for message in pending if message.key not in blocked]
             self.store.mark_processed(completed, self.stream)
             result.processed = len(completed)
@@ -222,6 +125,9 @@ class IncrementalService:
                 last_message_id=latest.message_id if latest else None,
             )
             result.events = [snapshot for event in events if (snapshot := snapshot_as_of(event, window.end))]
+            if self.settings.group_matching_enabled:
+                result.snapshot_scope = "related_events"
+                result.event_count = self.store.event_count(uid, self.stream)
             if recorder is not None:
                 recorder.record("program_result", attributions=result.filter_audit, review=result.review,
                                 created=result.created, updated=result.updated)
@@ -234,3 +140,142 @@ class IncrementalService:
         self.state.snapshot(result)
         self.state.advance(uid, self.stream, result.watermark)
         return result
+
+    def _analyze_batch(self, uid, window, pending, context, events, result, kinds, roles, observe, recorder, observer):
+        """分析一个批次；同群模式由调用方保证消息和上下文范围。"""
+        fingerprint = kinds_fingerprint(kinds)
+        bot_pending = [m for m in pending if sender_kind(m.to_dict(), kinds) == "bot"]
+        bot_keys = {m.key for m in bot_pending}
+        eligible = [m for m in pending if m.key not in bot_keys]
+        auxiliary = context + bot_pending
+        if recorder is not None:
+            recorder.input(pending, eligible, auxiliary)
+        if observer is not None:
+            observe("input", pending=[m.to_dict() | {"key": m.key, "digest": m.digest} for m in pending],
+                    context=[m.to_dict() | {"key": m.key, "digest": m.digest} for m in auxiliary])
+        configure = getattr(self.provider, "configure_sender_kinds", None)
+        if configure is not None:
+            configure(kinds)
+        configure_roles = getattr(self.provider, "configure_sender_roles", None)
+        if configure_roles is not None:
+            configure_roles(roles)
+        candidates = []
+        history, background = None, None
+        if eligible:
+            # 历史候选和补取背景限定本轮可引用的旧事件，明确决定不再按主题预合并。
+            conversation = (eligible[0].source, eligible[0].conversation_id) if self.settings.group_matching_enabled else None
+            history = self.history_retriever.retrieve(uid, self.stream, eligible, window.end, conversation=conversation)
+            if self.settings.group_matching_enabled:
+                loaded = self.store.events_by_ids(uid, self.stream, [e.event_id for e in history.events])
+                events = list({e.event_id: e for e in [*events, *loaded]}.values())
+            if recorder is not None:
+                recorder.record("history", candidates=[c.to_input() for c in history.candidates], metadata=history.metadata())
+            if observer is not None:
+                observe("history", candidates=[c.to_input() for c in history.candidates],
+                        metadata=history.metadata())
+            configure_history = getattr(self.provider, "configure_history_retrieval", None)
+            if configure_history is not None:
+                configure_history(history)
+            configure_context = getattr(self.provider, "configure_history_context", None)
+            if configure_context is not None:
+                # 补取结果走独立只读输入，不加入 pending、available 或事件写入证据。
+                background = self.history_context.retrieve(history, eligible, auxiliary, events, kinds)
+                configure_context(background)
+            if recorder is not None:
+                recorder.record("history_context", "completed" if background is not None else "skipped",
+                                result=background.to_input() if background is not None else None)
+                recorder.record("extraction", "started")
+                if not hasattr(self.provider, "configure_execution_observer"):
+                    recorder.record("provider_input", new_messages=[m.to_dict() | {"digest": m.digest} for m in eligible],
+                        context_messages=[m.to_dict() | {"digest": m.digest} for m in auxiliary])
+            configure_validator = getattr(self.provider, "configure_candidate_validator", None)
+            if configure_validator is not None:
+                def validate_proposals(proposals):
+                    available = validate_candidates(proposals, pending, context)
+                    human_keys = {m.key for m in eligible}
+                    accepted = [c for c in proposals if human_keys.intersection(c.evidence_ids)]
+                    preflight_attributions(accepted, events=events, visible_events=history.events,
+                        available=available, pending=pending, eligible=eligible, background=background,
+                        result=result, settings=self.settings, retrieval=history,
+                        customer_keys={m.key for m in eligible
+                            if confirmed_sender_role(m.to_dict(), roles) == "customer"})
+                configure_validator(validate_proposals)
+            try:
+                candidates = self.provider.extract(eligible, auxiliary, history.events)
+            finally:
+                if configure_validator is not None:
+                    configure_validator(None)
+        if recorder is not None:
+            if not eligible:
+                for stage in ("history", "history_context", "extraction"):
+                    recorder.record(stage, "skipped", reason="no_eligible_new_messages")
+            recorder.extracted(candidates)
+        if observer is not None:
+            observe("extracted", candidates=[asdict(c) for c in candidates])
+        available = validate_candidates(candidates, pending, context)
+        eligible_keys = {m.key for m in eligible}
+        accepted = []
+        for candidate in candidates:
+            if any(available[key].key in eligible_keys for key in candidate.evidence_ids):
+                accepted.append(candidate)
+            else:
+                result.filter_audit.append(dict(
+                    reason="bot_only_candidate", message_keys=[available[key].key for key in candidate.evidence_ids],
+                    policy_version=FILTER_VERSION, identity_config_hash=fingerprint))
+        candidates = accepted
+        pending_keys = eligible_keys
+        for message in bot_pending:
+            result.filter_audit.append(dict(
+                reason="confirmed_bot_auxiliary_only" if eligible else "confirmed_bot_without_new_discussion",
+                message_keys=[message.key], policy_version=FILTER_VERSION, identity_config_hash=fingerprint))
+        blocked = set()
+        explicit = any(candidate.decision is not None for candidate in candidates)
+        if explicit:
+            if any(candidate.decision is None for candidate in candidates):
+                raise ValueError("同一批候选不能混用明确归属和旧匹配规则")
+            events = apply_attributions(candidates, store=self.store, events=events,
+                visible_events=history.events, available=available, pending=pending, eligible=eligible,
+                background=background, result=result, settings=self.settings, retrieval=history, observe=observe,
+                customer_keys={m.key for m in eligible if confirmed_sender_role(m.to_dict(), roles) == "customer"},
+                recorder=recorder)
+        if self.settings.group_matching_enabled and candidates and not explicit:
+            raise ValueError("同群模式要求 Provider 返回明确归属，不能回退主题自动合并")
+        # 未声明归属的可替换 Provider 使用主题匹配，正式 XHub 统一返回明确归属。
+        for candidate in merge_batch([] if explicit else candidates, available, self.settings.match_window, pending_keys,
+                                     self.settings.closed_statuses,
+                                     {(e.type, e.topic_key) for e in events if e.closed_at is not None}):
+            old, possible_ids, uncertain = match(candidate, events, available, self.settings, pending_keys)
+            if uncertain:
+                blocked.update(available[key].key for key in candidate.evidence_ids)
+                result.review.append(dict(
+                    review_flag=REVIEW, type=candidate.type,
+                    message_ids=[available[key].message_id for key in candidate.evidence_ids],
+                    possible_event_ids=possible_ids,
+                    reason="主题或指代不明确，保留待复核，不自动新建或合并",
+                ))
+                if observer is not None or recorder is not None:
+                    observe("decision", candidate=asdict(candidate), action="review", event_id=None,
+                            possible_event_ids=possible_ids, reason=result.review[-1]["reason"],
+                            before=None, after=None)
+                continue
+            updated = apply_candidate(candidate, old, available, uid, self.stream, window, self.settings, pending_keys)
+            if recorder is not None and updated is not None:
+                updated.updated_by[-1]["attempt_id"] = recorder.attempt_id
+            if observer is not None or recorder is not None:
+                observe("decision", candidate=asdict(candidate),
+                        action="no_change" if updated is None else "created" if old is None else "updated",
+                        event_id=updated.event_id if updated else old.event_id if old else None,
+                        possible_event_ids=[], reason=None,
+                        before=old.to_dict() if old else None,
+                        after=updated.to_dict() if updated else old.to_dict() if old else None)
+            if updated is None:
+                continue
+            self.store.save_event(updated)
+            if old is None:
+                events.append(updated)
+                result.created.append(updated.event_id)
+            else:
+                events = [updated if event.event_id == updated.event_id else event for event in events]
+                if updated.event_id not in result.updated:
+                    result.updated.append(updated.event_id)
+        return events, blocked

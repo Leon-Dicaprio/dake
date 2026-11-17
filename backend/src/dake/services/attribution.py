@@ -5,6 +5,7 @@ from dataclasses import asdict, replace
 
 from ..analysis.attribution import decide
 from ..analysis.contract import ContractError
+from ..analysis.group_matching import constrain
 from ..analysis.continuity import resolve_continuity, validate_continuity
 from ..analysis.updates import apply_candidate
 from ..analysis.validation import candidate_times
@@ -68,12 +69,16 @@ def _combine(candidates, old, available, new_keys):
 
 
 def apply_attributions(candidates, *, store, events, visible_events, available, pending, eligible,
-                       background, result, settings, observe, customer_keys=(), recorder=None):
+                       background, result, settings, observe, customer_keys=(), recorder=None, retrieval=None):
     """先核对整批，再按消息时间执行；恢复与再次发生分别保存，不被批内合并压平。"""
     new_keys = {m.key for m in pending}
     human_keys = {m.key for m in eligible}
     plans = []
     for candidate in candidates:
+        original = candidate
+        matching = None
+        if settings.group_matching_enabled:
+            candidate, matching = constrain(candidate, retrieval=retrieval, available=available, eligible=eligible)
         if any(key not in new_keys for key in candidate.evidence_ids):
             raise ContractError("明确归属的写入证据只能来自本批新增或变更消息，旧背景须放在 basis")
         validate_changes(candidate, available, human_keys)
@@ -83,9 +88,13 @@ def apply_attributions(candidates, *, store, events, visible_events, available, 
                         uid=result.uid, stream=result.stream, before=result.window.end,
                         closed_statuses=settings.closed_statuses)
         record.update(kind="event_attribution", window_start=result.window.start.isoformat(),
-                      window_end=result.window.end.isoformat(), requested_action=candidate.decision)
+                      window_end=result.window.end.isoformat(), requested_action=original.decision)
+        if matching is not None:
+            record["program_matching"] = matching
+            if record["action"] == "duplicate":
+                record.update(business_classification="non_business", processing_action="no_action")
         if recorder is not None:
-            record.update(attempt_id=recorder.attempt_id, proposal_id=recorder.proposals[id(candidate)])
+            record.update(attempt_id=recorder.attempt_id, proposal_id=recorder.proposals[id(original)])
         plans.append((candidate, record))
     # 同一句明确回顾恢复并报告复发，可先写原事件确认，再创建本次事件。
     def order(pair):
@@ -155,6 +164,8 @@ def apply_attributions(candidates, *, store, events, visible_events, available, 
                 record.update(revision_no=revision.get("revision_no") if revision else None,
                               summary_changed=revision.get("summary_changed", False) if revision else False,
                               change_kind=revision.get("change_kind") if revision else "no_change")
+            if settings.group_matching_enabled and action == "update" and updated is None:
+                record.update(business_classification="non_business", processing_action="no_action")
             observe("decision", candidate=asdict(candidate), action=action, event_id=record["event_id"],
                     possible_event_ids=record["possible_event_ids"], reason=record["reason"],
                     **({"proposal_id": record["proposal_id"],

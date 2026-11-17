@@ -103,6 +103,9 @@ class Settings:
     ingest_lookback: timedelta = timedelta(days=2)
     history_retrieval: HistoryRetrievalSettings = field(default_factory=HistoryRetrievalSettings)
     history_context: HistoryContextSettings = field(default_factory=HistoryContextSettings)
+    # 显式迁移群索引后启用；旧执行及其收据继续沿用原策略。
+    group_matching_enabled: bool = False
+    group_batch_chars: int = 16000
     provider: str = "stub"
     llm_model: str = "gpt-6.1-sol"
     llm_max_tokens: int = 8192
@@ -122,6 +125,8 @@ class Settings:
         if not data_dir.is_absolute():
             data_dir = PROJECT_ROOT / data_dir
         result = cls(
+            group_matching_enabled=get("GROUP_MATCHING_ENABLED", "0") == "1",
+            group_batch_chars=int(get("GROUP_BATCH_CHARS", "16000")),
             schedule_enabled=get("SCHEDULE_ENABLED", "0") == "1",
             schedule_poll_seconds=int(get("SCHEDULE_POLL_SECONDS", "5")),
             schedule_retry_delays=tuple(int(v.strip()) for v in get("SCHEDULE_RETRY_DELAYS_SECONDS", "60,300,900").split(",")),
@@ -175,6 +180,8 @@ class Settings:
             raise ValueError("DATA_DIR 必须位于本项目 data/ 目录下")
         if self.provider not in {"stub", "xhub"}:
             raise ValueError("LLM_PROVIDER 仅支持 stub 或 xhub")
+        if not 1024 <= self.group_batch_chars <= 64000:
+            raise ValueError("同群新增消息字符预算须在 1024 至 64000 之间")
         if not self.llm_model or not 1 <= self.llm_max_tokens <= 8192 or not 1 <= self.llm_timeout_seconds <= 300:
             raise ValueError("模型名称、输出上限或超时配置无效")
         if type(self.chat_retries) is not int or not 0 <= self.chat_retries <= 3:

@@ -56,7 +56,7 @@ def show_result(result):
     end = result.window.end.strftime("%Y-%m-%d %H:%M")
     print(f"[{start} → {end}) 摄入变化={result.ingested} 处理={result.processed} "
           f"新建={len(result.created)} 更新={len(result.updated)} 待确认={len(result.review)} "
-          f"事件总数={len(result.events)}")
+          f"事件总数={result.event_count if result.event_count is not None else len(result.events)}")
     for label, ids in (("新建", result.created), ("更新", result.updated)):
         for event_id in ids:
             event = next(event for event in result.events if event["event_id"] == event_id)

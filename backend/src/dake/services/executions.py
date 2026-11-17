@@ -6,6 +6,7 @@ import hashlib
 import json
 
 from ..analysis.attribution import attribution_version
+from ..analysis.group_matching import group_matching_version
 from ..domain.models import CycleResult, json_value, parse_time
 from ..repositories.attempts import AttemptError, AttemptPendingVerification, DeliveryError, now
 from ..repositories.mysql import TransactionOutcomeUnknown
@@ -25,12 +26,15 @@ def message_ref(message):
 def execution_policy(service):
     """只冻结已有处理参数，不改变策略、分析范围或既有规则。"""
     settings = service.settings
-    return dict(provider=service.stream, attribution=attribution_version(),
+    policy = dict(provider=service.stream, attribution=attribution_version(),
         start=settings.start.isoformat(), history_retrieval=asdict(settings.history_retrieval),
         history_context=asdict(settings.history_context), context_lookback=str(settings.context_lookback),
         ingest_lookback=str(settings.ingest_lookback), match_window=str(settings.match_window),
         closed_grace=str(settings.closed_grace), closed_statuses=list(settings.closed_statuses),
         default_status=settings.default_status, default_severity=settings.default_severity)
+    if settings.group_matching_enabled:
+        policy.update(group_matching=group_matching_version(), group_batch_chars=settings.group_batch_chars)
+    return policy
 
 
 def receipt_for(result, events, completed, *, kind="analysis", parent=None, source_receipt=None):
@@ -60,7 +64,9 @@ def restore_receipt(service, receipt):
     value = deepcopy(receipt["cycle"])
     if value["uid"] != service.settings.uid or value["stream"] != service.stream:
         raise AttemptError("提交收据与当前客户或分析范围不符")
-    events = {e.event_id: e for e in service.store.list_events(value["uid"], value["stream"])}
+    loaded = (service.store.events_by_ids(value["uid"], value["stream"], [r["event_id"] for r in receipt["event_versions"]])
+              if value.get("snapshot_scope") == "related_events" else service.store.list_events(value["uid"], value["stream"]))
+    events = {e.event_id: e for e in loaded}
     snapshots = []
     for ref in receipt["event_versions"]:
         event = events.get(ref["event_id"])
@@ -88,17 +94,21 @@ class ExecutionRecorder:
         self.files_started = False
         self.proposals = {}
         self.model_calls = 0
+        self.input_batches = 0
+        self.suggestion_batches = 0
 
     def record(self, stage, status="completed", **payload):
         self.repository.stage(self.uid, self.stream, self.attempt_id, stage, status, deepcopy(payload))
 
     def input(self, pending, eligible, auxiliary):
+        self.input_batches += 1
         manifest = dict(pending=[message_ref(m) for m in pending], eligible=[m.key for m in eligible],
                         auxiliary=[message_ref(m) for m in auxiliary])
         digest = fingerprint(manifest)
-        previous = next((s["payload"].get("input_digest") for s in (self.parent or {}).get("stages", [])
-                         if s["stage"] == "input"), None)
+        prior = [s["payload"].get("input_digest") for s in (self.parent or {}).get("stages", []) if s["stage"] == "input"]
+        previous = prior[self.input_batches - 1] if len(prior) >= self.input_batches else None
         self.record("input", manifest=manifest, input_digest=digest,
+                    batch_no=self.input_batches,
                     comparison_scope="pending_and_auxiliary_message_versions",
                     previous_input_digest=previous, input_changed=None if previous is None else previous != digest)
 
@@ -114,7 +124,9 @@ class ExecutionRecorder:
                     call_no=self.model_calls, **payload)
 
     def extracted(self, candidates):
-        self.proposals = {id(candidate): f"{self.attempt_id}:{self.model_calls}:{i}" for i, candidate in enumerate(candidates)}
+        self.suggestion_batches += 1
+        self.proposals = {id(candidate): f"{self.attempt_id}:{self.model_calls}:{self.suggestion_batches}:{i}"
+                          for i, candidate in enumerate(candidates)}
         self.record("suggestions", suggestions=[dict(proposal_id=self.proposals[id(c)], value=asdict(c)) for c in candidates])
 
     def decision(self, **payload):
@@ -190,7 +202,7 @@ def run_recorded(service, uid, window, *, observer=None, execution=None):
                 result.attempt_id = attempt_id
                 result.recovered_from_attempt_id = parent["attempt_id"]
                 with service.store.transaction(uid):
-                    recorder.receipt(service.store, result, service.store.list_events(uid, service.stream), [],
+                    recorder.receipt(service.store, result, [], [],
                                      kind="delivery_recovery", parent=parent["attempt_id"], source_receipt=parent["receipt"])
                 recorder.committed = True
                 repo.confirm_commit(uid, service.stream, attempt_id)

@@ -90,6 +90,8 @@ class HistoryContextService:
         anchors, needs = {}, set()
         for identity, (ref, links) in requests.items():
             message = supplied.get(identity) or loaded.get(identity)
+            if history.conversation and message is not None and (message.source, message.conversation_id) != history.conversation:
+                raise ValueError("历史证据正文不属于本群，不能补入模型上下文")
             item = self._item(ref, links, message, kinds)
             if identity in supplied:
                 item.update(availability="already_in_input", fragments=[], truncated=False,
@@ -188,7 +190,7 @@ class HistoryContextService:
         text = message.content if message is not None else str(ref.get("excerpt") or "")[:160]
         return dict(id=f"{ref['source']}:{ref['message_id']}", source=ref["source"], message_id=ref["message_id"],
                     digest=ref.get("digest"), send_time=ref["send_time"], links=deepcopy(links),
-                    conversation_id=message.conversation_id if message else None,
+                    conversation_id=message.conversation_id if message else ref.get("conversation_id"),
                     sender_id=message.sender_id if message else None,
                     sender_kind=sender_kind(message.to_dict(), kinds) if message else "unknown",
                     availability="full" if message else "excerpt_only" if text else "missing",

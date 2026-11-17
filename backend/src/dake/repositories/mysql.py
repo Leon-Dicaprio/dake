@@ -355,12 +355,54 @@ class MySQLStore:
         )
         return [Event.from_dict(_decoded(row["payload"])) for row in rows]
 
-    def history_event_heads(self, uid, stream, before, *, limit, since=None, cursor=None, event_ids=None):
+    def events_by_ids(self, uid, stream, event_ids):
+        """按已核验的候选或收据加载完整事件，不读取全客户正文。"""
+        if not event_ids:
+            return []
+        rows, _ = self._execute("SELECT payload FROM events WHERE uid=%s AND stream=%s AND event_id IN (" +
+            ",".join(["%s"] * len(event_ids)) + ") ORDER BY start_time,event_id", (uid, stream, *event_ids))
+        return [Event.from_dict(_decoded(row["payload"])) for row in rows]
+
+    def event_revision_counts(self, uid, stream):
+        """任务基线只读取修订计数，不复制事件正文及全部历史快照。"""
+        rows, _ = self._execute("SELECT event_id,JSON_LENGTH(payload,'$.updated_by') AS count "
+                                "FROM events WHERE uid=%s AND stream=%s", (uid, stream))
+        return {row["event_id"]: row["count"] or 0 for row in rows}
+
+    def has_future_event_revision(self, uid, stream, before):
+        """只读修订时间元数据，保留禁止向已推进分析流倒灌旧窗口的检查。"""
+        rows, _ = self._execute("SELECT JSON_EXTRACT(payload,'$.updated_by[*].window_end') AS ends "
+                                "FROM events WHERE uid=%s AND stream=%s", (uid, stream))
+        return any(parse_time(end) > before for row in rows
+                   for end in (_decoded(row["ends"]) if row["ends"] is not None else []))
+
+    def event_count(self, uid, stream):
+        """通过客户和流索引统计总数，相关事件快照不能冒充客户全量。"""
+        rows, _ = self._execute("SELECT COUNT(*) AS count FROM events WHERE uid=%s AND stream=%s", (uid, stream))
+        return rows[0]["count"]
+
+    def history_event_heads(self, uid, stream, before, *, limit, since=None, cursor=None, event_ids=None,
+                            conversation=None, message_keys=None):
         """先按客户和流限定，按索引顺序有界读取元数据，不查询正文或摘要。"""
         if not uid or not stream or type(limit) is not int or limit <= 0:
             raise ValueError("历史检索范围或分页预算无效")
         conditions = ["uid=%s", "stream=%s", "end_time < %s"]
         args = [uid, stream, _sql_time(before)]
+        if conversation is not None:
+            source, group = conversation
+            if not source or not group:
+                raise ValueError("同群检索必须提供来源与稳定群 ID")
+            link_conditions = ["uid=%s", "stream=%s", "source=%s", "conversation_id=%s"]
+            link_args = [uid, stream, source, group]
+            if message_keys is not None:
+                ids = [key.split(":", 1)[1] for key in message_keys if key.startswith(source + ":")]
+                if not ids:
+                    return []
+                link_conditions.append("message_id IN (" + ",".join(["%s"] * len(ids)) + ")")
+                link_args.extend(ids)
+            conditions.append("event_id IN (SELECT event_id FROM event_group_links WHERE " +
+                              " AND ".join(link_conditions) + ")")
+            args.extend(link_args)
         if since is not None:
             conditions.append("end_time >= %s")
             args.append(_sql_time(since))
@@ -380,6 +422,43 @@ class MySQLStore:
         return [dict(event_id=row["event_id"], end_time=parse_time(row["end_time"]),
                      revision_ends=_decoded(row["revision_ends"]) if row["revision_ends"] else [])
                 for row in rows]
+
+    def index_event_groups(self, event):
+        """与事件同事务替换证据群索引；旧版本正文缺失时保留未知群。"""
+        self._require_transaction(event.uid)
+        self._execute("DELETE FROM event_group_links WHERE event_id=%s", (event.event_id,))
+        self._execute("""INSERT INTO event_group_links
+            (event_id,uid,stream,source,message_id,digest,conversation_id,end_time)
+            SELECT DISTINCT e.event_id,e.uid,e.stream,j.source,j.message_id,COALESCE(j.digest,''),
+                COALESCE(NULLIF(j.conversation_id,''),
+                    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(m.payload,'$.conversation_id')),''),''),e.end_time
+            FROM events e JOIN JSON_TABLE(e.payload,'$.evidence[*]' COLUMNS (
+                source VARCHAR(64) PATH '$.source', message_id VARCHAR(128) PATH '$.message_id',
+                digest CHAR(64) PATH '$.digest' NULL ON EMPTY,
+                conversation_id VARCHAR(128) PATH '$.conversation_id' NULL ON EMPTY)) AS j
+            LEFT JOIN messages m ON m.uid=e.uid AND m.source=j.source
+                AND m.message_id=j.message_id AND m.digest=j.digest
+            WHERE e.event_id=%s AND e.uid=%s AND e.stream=%s""", (event.event_id,event.uid,event.stream))
+
+    def group_index_incomplete(self, uid, stream):
+        """未知群及漏维护的索引不能被当成该群确实没有历史事项。"""
+        rows, _ = self._execute("SELECT EXISTS(SELECT 1 FROM events e WHERE e.uid=%s AND e.stream=%s "
+            "AND (NOT EXISTS(SELECT 1 FROM event_group_links l WHERE l.event_id=e.event_id) "
+            "OR EXISTS(SELECT 1 FROM event_group_links l WHERE l.event_id=e.event_id "
+            "AND (l.conversation_id='' OR l.end_time<>e.end_time)))) AS incomplete", (uid, stream))
+        return bool(rows[0]["incomplete"])
+
+    def group_evidence_keys(self, uid, stream, event_ids, conversation):
+        """只返回本群的证据身份，避免旧跨群事件补取其他群原文。"""
+        if not event_ids:
+            return {}
+        rows, _ = self._execute("SELECT event_id,source,message_id,digest FROM event_group_links "
+            "WHERE uid=%s AND stream=%s AND source=%s AND conversation_id=%s AND event_id IN (" +
+            ",".join(["%s"] * len(event_ids)) + ")", (uid, stream, *conversation, *event_ids))
+        result = {}
+        for row in rows:
+            result.setdefault(row["event_id"], set()).add((row["source"], row["message_id"], row["digest"]))
+        return result
 
     def history_event_snapshots(self, uid, stream, heads):
         """仅读取已核验元数据对应的最后快照；元数据变化则跳过，不回退当前值。"""
@@ -423,6 +502,13 @@ class MySQLStore:
                    review_flag,payload,event_id) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 values,
             )
+        # 迁移后所有写入入口都维护索引，包括仍按旧策略执行的已排队任务。
+        if getattr(self, "_group_index_available", None) is None:
+            tables, _ = self._execute("SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema=DATABASE() AND table_name='event_group_links'")
+            self._group_index_available = bool(tables)
+        if self._group_index_available:
+            self.index_event_groups(event)
 
     def close(self) -> None:
         """释放本实例的数据库连接，可重复调用。"""

@@ -14,6 +14,7 @@ class MemoryStore:
         self.events = {}
         self.processed = {}
         self.attributions = {}
+        self.group_links = {}
         self._uid = None
 
     def init_schema(self):
@@ -23,12 +24,12 @@ class MemoryStore:
     def transaction(self, uid):
         if self._uid is not None:
             raise RuntimeError("测试仓库不允许嵌套事务")
-        before = deepcopy((self.messages, self.events, self.processed, self.attributions))
+        before = deepcopy((self.messages, self.events, self.processed, self.attributions, self.group_links))
         self._uid = uid
         try:
             yield self
         except BaseException:
-            self.messages, self.events, self.processed, self.attributions = before
+            self.messages, self.events, self.processed, self.attributions, self.group_links = before
             raise
         finally:
             self._uid = None
@@ -103,13 +104,31 @@ class MemoryStore:
         return sorted((deepcopy(e) for e in self.events.values() if e.uid == uid and e.stream == stream),
                       key=lambda event: (event.start_time, event.event_id))
 
-    def history_event_heads(self, uid, stream, before, *, limit, since=None, cursor=None, event_ids=None):
+    def events_by_ids(self, uid, stream, event_ids):
+        return [deepcopy(e) for e in self.events.values() if e.event_id in event_ids and (e.uid, e.stream) == (uid, stream)]
+
+    def event_revision_counts(self, uid, stream):
+        return {e.event_id: len(e.updated_by) for e in self.events.values() if (e.uid, e.stream) == (uid, stream)}
+
+    def has_future_event_revision(self, uid, stream, before):
+        from dake.domain.models import parse_time
+        return any(parse_time(r["window_end"]) > before for e in self.events.values()
+                   if (e.uid, e.stream) == (uid, stream) for r in e.updated_by)
+
+    def event_count(self, uid, stream):
+        return sum((e.uid, e.stream) == (uid, stream) for e in self.events.values())
+
+    def history_event_heads(self, uid, stream, before, *, limit, since=None, cursor=None, event_ids=None,
+                            conversation=None, message_keys=None):
         """模拟已在仓库层限定范围的键集分页，保留与生产查询一致的边界。"""
         events = [event for event in self.events.values()
                   if event.uid == uid and event.stream == stream and event.end_time < before
                   and (since is None or event.end_time >= since)
                   and (cursor is None or (event.end_time, event.event_id) < cursor)
-                  and (event_ids is None or event.event_id in event_ids)]
+                  and (event_ids is None or event.event_id in event_ids)
+                  and (conversation is None or any((r[0], r[3]) == conversation
+                       and (message_keys is None or f"{r[0]}:{r[1]}" in message_keys)
+                       for r in self.group_links.get(event.event_id, [])))]
         events.sort(key=lambda event: (event.end_time, event.event_id), reverse=True)
         return [dict(event_id=event.event_id, end_time=event.end_time,
                      revision_ends=[revision.get("window_end") for revision in event.updated_by])
@@ -134,6 +153,25 @@ class MemoryStore:
         if existing and (existing.uid, existing.stream) != (event.uid, event.stream):
             raise RuntimeError("事件不能覆盖其他客户或分析流")
         self.events[event.event_id] = deepcopy(event)
+        self.index_event_groups(event)
+
+    def index_event_groups(self, event):
+        """模拟只有同版本消息才能回填群的事务索引。"""
+        self._require(event.uid)
+        refs = []
+        for ref in event.evidence:
+            message = self.messages.get(f"{ref['source']}:{ref['message_id']}")
+            group = ref.get("conversation_id") or (message.conversation_id if message and message.digest == ref.get("digest") else "")
+            refs.append((ref["source"], ref["message_id"], ref.get("digest") or "", group))
+        self.group_links[event.event_id] = refs
+
+    def group_evidence_keys(self, uid, stream, event_ids, conversation):
+        return {key: {r[:3] for r in self.group_links.get(key, []) if (r[0], r[3]) == conversation}
+                for key in event_ids if (self.events[key].uid, self.events[key].stream) == (uid, stream)}
+
+    def group_index_incomplete(self, uid, stream):
+        return any(not self.group_links.get(e.event_id) or any(not r[3] for r in self.group_links[e.event_id])
+                   for e in self.events.values() if (e.uid, e.stream) == (uid, stream))
 
     def close(self):
         pass

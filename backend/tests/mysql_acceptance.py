@@ -109,6 +109,9 @@ def prepare_database(target, data_dir, *, store_factory=MySQLStore):
         for statement in (ROOT / "backend/migrations/003_processing_schedules.sql").read_text(encoding="utf-8").split(";"):
             if statement.strip():
                 store._execute(statement)
+        for statement in (ROOT / "backend/migrations/004_event_group_links.sql").read_text(encoding="utf-8").split(";"):
+            if statement.strip():
+                store._execute(statement)
         RunRepository(target.settings(data_dir), store_factory=store_factory).init_schema()
     finally:
         store.close()

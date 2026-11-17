@@ -9,6 +9,8 @@ import re
 from ..config import HistoryRetrievalSettings
 from ..domain.models import Event, Message, parse_time
 from ..analysis.continuity import recovery_is_safe
+from ..analysis.group_matching import MATCH_FIELDS
+from ..analysis.references import EVENT_REFERENCE as _EVENT_REF, MESSAGE_REFERENCE as _MESSAGE_REF
 
 
 RETRIEVAL_VERSION = "bounded-keywords-v1"
@@ -19,9 +21,6 @@ history_retrieval.incomplete 为 true 表示预算、版本或快照限制导致
 较早或已关闭事件也可作为背景；是否允许更新仍遵守现有输出合约及匹配规则。
 """
 
-_UUID = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
-_EVENT_REF = re.compile(r"\bevent_id\s*[:=]\s*(" + _UUID + r")(?![\w-])")
-_MESSAGE_REF = re.compile(r"\bmessage_id\s*[:=]\s*([a-zA-Z][a-zA-Z0-9_]*:[a-zA-Z0-9_.-]+)")
 _WORDS = re.compile(r"[\u3400-\u9fff]+|[a-zA-Z0-9][a-zA-Z0-9_.-]*")
 
 
@@ -72,6 +71,7 @@ class HistoryCandidate:
                     recovery=dict(confirmed_at=recovery["confirmed_at"], evidence_ids=[
                         f"{ref['source']}:{ref['message_id']}" for ref in recovery["evidence"]]) if recovery else None,
                     recurrence_of_event_id=event.recurrence_of["event_id"] if event.recurrence_of else None,
+                    matching={key: value for key, value in event.attributes.items() if key in MATCH_FIELDS},
                     hit_reasons=list(self.hit_reasons), evidence_ids=list(self.evidence_ids),
                     evidence_limited=self.evidence_limited)
 
@@ -93,6 +93,9 @@ class HistoryRetrievalResult:
     clues_limited: bool = False
     context_limited: bool = False
     context_chars: int = 2
+    conversation: tuple[str, str] | None = None
+    index_incomplete: bool = False
+    exact_limited: bool = False
 
     @property
     def events(self):
@@ -102,11 +105,15 @@ class HistoryRetrievalResult:
     def metadata(self):
         """限制元数据不包含消息正文、检索词或外部凭据。"""
         return dict(version=RETRIEVAL_VERSION, mode="forward_only", before=self.before.isoformat(),
+                    scope="conversation" if self.conversation else "customer",
+                    conversation_id=self.conversation[1] if self.conversation else None,
+                    index_incomplete=self.index_incomplete,
+                    exact_limited=self.exact_limited,
                     scanned=self.scanned, pages=self.pages, unsafe_skipped=self.unsafe_skipped,
                     snapshot_unavailable=self.snapshot_unavailable, scan_limited=self.scan_limited,
                     clues_limited=self.clues_limited, context_limited=self.context_limited,
                     context_chars=self.context_chars,
-                    incomplete=bool(self.scan_limited or self.clues_limited or self.context_limited
+                    incomplete=bool(self.exact_limited or self.index_incomplete or self.scan_limited or self.clues_limited or self.context_limited
                                     or self.unsafe_skipped or self.snapshot_unavailable
                                     or any(c.evidence_limited for c in self.candidates)))
 
@@ -117,13 +124,19 @@ class HistoryRetriever:
     def __init__(self, store, limits: HistoryRetrievalSettings):
         self.store, self.limits = store, limits
 
-    def retrieve(self, uid: str, stream: str, messages: list[Message], before: datetime):
+    def retrieve(self, uid: str, stream: str, messages: list[Message], before: datetime, *, conversation=None):
         """由增量服务在现有客户事务内调用，只使用本批可分析消息生成线索。"""
         if not uid or not stream or before.tzinfo is None:
             raise ValueError("历史检索必须有客户、分析流及带时区的上界")
         if any(message.uid != uid or message.sent_at >= before for message in messages):
             raise ValueError("历史检索输入超出客户或时间范围")
         result = HistoryRetrievalResult(uid, stream, before, tuple((m.key, m.digest) for m in messages))
+        result.conversation = conversation
+        if conversation is not None:
+            if not all((m.source, m.conversation_id) == conversation for m in messages) or not all(conversation):
+                raise ValueError("同群检索输入必须属于同一来源和稳定群 ID")
+            result.index_incomplete = self.store.group_index_incomplete(uid, stream)
+        scope = dict(conversation=conversation) if conversation else {}
         if not messages:
             return result
         event_refs, message_refs, keywords, result.clues_limited = _clues(messages, self.limits)
@@ -147,6 +160,7 @@ class HistoryRetriever:
                 else:
                     result.unsafe_skipped += 1
             snapshots = self.store.history_event_snapshots(uid, stream, safe) if safe else []
+            group_keys = self.store.group_evidence_keys(uid, stream, [e.event_id for e in snapshots], conversation) if conversation else None
             result.snapshot_unavailable += len(safe) - len(snapshots)
             by_id = {head["event_id"]: head for head in safe}
             for event in snapshots:
@@ -166,6 +180,18 @@ class HistoryRetriever:
                 if not valid:
                     result.unsafe_skipped += 1
                     continue
+                if group_keys is not None:
+                    event.evidence = [ref for ref in event.evidence if
+                        (ref["source"], ref["message_id"], ref.get("digest") or "") in group_keys.get(event.event_id, set())]
+                    if not event.evidence or any(ref.get("conversation_id") not in (None, "", conversation[1]) for ref in event.evidence):
+                        result.unsafe_skipped += 1
+                        continue
+                    for ref in event.evidence:
+                        ref["conversation_id"] = conversation[1]
+                    keys = {(ref["source"], ref["message_id"], ref.get("digest")) for ref in event.evidence}
+                    if event.recovery and not all((ref["source"], ref["message_id"], ref.get("digest")) in keys
+                                                  for ref in event.recovery["evidence"]):
+                        event.recovery = None
                 evidence_ids = list(dict.fromkeys(f"{item['source']}:{item['message_id']}" for item in event.evidence))
                 facts = " ".join(f"{key} {value}" for key, value in event.attributes.items() if isinstance(value, str))
                 text = f"{event.topic_key or ''} {event.summary} {facts}".casefold()
@@ -181,7 +207,8 @@ class HistoryRetriever:
                 rank = (-int(exact_event), -int(exact_message), event.end_time < recent_start,
                         -len(hits), event.closed_at is not None, -event.end_time.timestamp(), event.event_id)
                 event = deepcopy(event)
-                event.attributes, event.extensions, event.updated_by = {}, {}, []
+                event.attributes = {key: value for key, value in event.attributes.items() if key in MATCH_FIELDS} if conversation else {}
+                event.extensions, event.updated_by = {}, []
                 # 显式命中的引用优先保留；同消息的多个版本仅输出一次引用。
                 recovery_refs = (event.recovery or {}).get("evidence", [])
                 recovery_ids = list(dict.fromkeys(f"{ref['source']}:{ref['message_id']}" for ref in recovery_refs))
@@ -207,14 +234,19 @@ class HistoryRetriever:
 
         if event_refs:
             consume(self.store.history_event_heads(uid, stream, before, limit=self.limits.exact_limit,
-                                                   event_ids=event_refs))
+                                                   event_ids=event_refs, **scope))
+        if conversation and message_refs:
+            exact = self.store.history_event_heads(uid, stream, before, limit=self.limits.exact_limit + 1,
+                                                   message_keys=message_refs, **scope)
+            result.exact_limited = len(exact) > self.limits.exact_limit
+            consume(exact[:self.limits.exact_limit])
         # 近期与更早历史各有页数，近期记录很多也不会挤掉更早历史的扫描名额。
         for upper, lower, page_limit in ((before, recent_start, self.limits.recent_pages),
                                          (recent_start, None, self.limits.older_pages)):
             cursor = None
             for page_index in range(page_limit):
                 heads = self.store.history_event_heads(uid, stream, upper, since=lower, cursor=cursor,
-                                                       limit=self.limits.page_size)
+                                                       limit=self.limits.page_size, **scope)
                 result.pages += 1
                 consume(heads)
                 if len(heads) < self.limits.page_size:
