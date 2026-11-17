@@ -82,6 +82,9 @@ class HistoryContextSettings:
 class Settings:
     """依赖注入的运行配置；密码不参与对象文本表示，避免调试时意外输出。"""
     mysql_host: str = "127.0.0.1"
+    schedule_enabled: bool = False
+    schedule_poll_seconds: int = 5
+    schedule_retry_delays: tuple[int, ...] = (60, 300, 900)
     chat_retries: int = 2
     mysql_port: int = 3307
     mysql_database: str = "dake_aftersales"
@@ -119,6 +122,9 @@ class Settings:
         if not data_dir.is_absolute():
             data_dir = PROJECT_ROOT / data_dir
         result = cls(
+            schedule_enabled=get("SCHEDULE_ENABLED", "0") == "1",
+            schedule_poll_seconds=int(get("SCHEDULE_POLL_SECONDS", "5")),
+            schedule_retry_delays=tuple(int(v.strip()) for v in get("SCHEDULE_RETRY_DELAYS_SECONDS", "60,300,900").split(",")),
             mysql_host=get("MYSQL_HOST", "127.0.0.1"),
             mysql_port=int(get("MYSQL_PORT", "3307")),
             mysql_database=get("MYSQL_DATABASE", "dake_aftersales"),
@@ -173,6 +179,9 @@ class Settings:
             raise ValueError("模型名称、输出上限或超时配置无效")
         if type(self.chat_retries) is not int or not 0 <= self.chat_retries <= 3:
             raise ValueError("取数内部重试次数无效")
+        if (self.schedule_poll_seconds < 1 or len(self.schedule_retry_delays) != 3
+                or any(type(v) is not int or not 1 <= v <= 86400 for v in self.schedule_retry_delays)):
+            raise ValueError("定时检查间隔须为正数，重试须明确配置三个正整数秒")
 
     def store_kwargs(self) -> dict:
         """将数据库配置交给存储组件；调用方不得记录返回的凭据。"""

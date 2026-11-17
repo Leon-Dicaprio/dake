@@ -5,6 +5,7 @@ from datetime import timedelta
 import json
 import math
 import threading
+from time import monotonic
 from uuid import uuid4
 
 from ..bootstrap import build_service
@@ -82,6 +83,8 @@ class RunRunner:
         self._wake = threading.Event()
         self._thread = None
         self._keeper = None
+        self.scheduler = None
+        self._schedule_tick = 0
 
     def start(self):
         """启动一个本地工作线程；数据库执行锁防止多 API 实例重复工作。"""
@@ -124,6 +127,14 @@ class RunRunner:
                     # 只有新取得执行锁的实例恢复中断，旁观实例不触碰别人的 running。
                     self.repository.recover_interrupted()
                     while not self._stop.is_set() and self._leader_alive():
+                        if self.scheduler is not None and monotonic() >= self._schedule_tick:
+                            self._schedule_tick = monotonic() + self.settings.schedule_poll_seconds
+                            try:
+                                self.scheduler.tick()
+                            except Exception:
+                                # 定时编排失败不吞掉手动队列；页面可从最近触发时间发现停止。
+                                import logging
+                                logging.getLogger(__name__).warning("定时编排未完成，请检查迁移、名单与本地数据库")
                         run = self.repository.claim_next(self.runner_id)
                         if run is None:
                             self._wait()

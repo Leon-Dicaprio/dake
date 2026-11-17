@@ -3,6 +3,8 @@
 import argparse
 from dataclasses import replace
 import sys
+import json
+import threading
 
 from .bootstrap import build_service
 from .config import Settings, bound, duration
@@ -20,6 +22,14 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--env-file", default=None, help="本地配置文件，默认使用仓库根 .env")
     sub = root.add_subparsers(dest="command", required=True)
     sub.add_parser("init-db", help="在本项目的本地 MySQL 中建立两张表")
+    schedule = sub.add_parser("schedule", help="配置、触发、查询或运行持续增量调度")
+    actions = schedule.add_subparsers(dest="action", required=True)
+    actions.add_parser("start", help="从选定日期开始，读取上游客户名单").add_argument("--start", required=True)
+    actions.add_parser("tick", help="外部定时器单次触发，只提交每客户一个窗口")
+    actions.add_parser("status", help="查询数据库中的真实进度和暂停原因")
+    actions.add_parser("run", help="运行单实例定时编排及既有任务执行器")
+    for action in ("pause", "resume"):
+        actions.add_parser(action, help="暂停或显式恢复客户调度").add_argument("--id", required=True)
     for name, help_text in (
         ("fetch", "取数、适配并保存消息，不做分析"),
         ("process", "按配置或水位执行一个周期"),
@@ -58,6 +68,38 @@ def main(argv=None) -> int:
     args = parser().parse_args(argv)
     try:
         settings = Settings.load(args.env_file)
+        if args.command == "schedule":
+            from .services.scheduling import SchedulingService
+            from .jobs.runner import RunRunner
+            from .repositories.runs import RunRepository
+            scheduling = SchedulingService(settings)
+            if args.action == "start":
+                result = scheduling.configure(args.start)
+            elif args.action == "tick":
+                result = dict(enqueued=scheduling.tick())
+            elif args.action == "status":
+                result = scheduling.status()
+            elif args.action in {"pause", "resume"}:
+                result = scheduling.control_customer(args.id, args.action)
+            else:
+                repository = RunRepository(settings)
+                runner = RunRunner(settings, repository)
+                runner.start()
+                print("定时增量运行中；客户轮转、进度及有限重试均保存到本地 MySQL。")
+                try:
+                    while True:
+                        try:
+                            scheduling.tick()
+                            runner.notify()
+                        except StorageError:
+                            print("本轮定时编排未完成，数据库进度已保留；稍后继续检查。", file=sys.stderr)
+                        # 独立编排不依赖执行锁；API 已持有执行锁时仍可正常提交任务。
+                        threading.Event().wait(settings.schedule_poll_seconds)
+                except KeyboardInterrupt:
+                    runner.stop()
+                return 0
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
         if args.command != "init-db":
             settings = replace(
                 settings, uid=args.uid or settings.uid,
