@@ -99,7 +99,13 @@ class XHubProvider:
         self.prompt_hash = hashlib.sha256(self.prompt.encode()).hexdigest()
         self.schema_hash = hashlib.sha256(json.dumps(schema, sort_keys=True).encode()).hexdigest()
         self.name = xhub_identity(config.model, config.response_format, config.max_tokens)["stream"]
-        self.client = httpx.Client(timeout=config.timeout_seconds, follow_redirects=False, transport=transport)
+        # 仅 TCP/TLS 建连失败允许最多两次重试；HTTP 请求发出后的读取失败不重发。
+        # 独立连接超时避免一个不可达地址占满整个模型生成等待时间，证书校验保持开启。
+        network = transport
+        if network is None and not any(os.environ.get(key) for key in ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy")):
+            network = httpx.HTTPTransport(retries=2)
+        self.client = httpx.Client(timeout=httpx.Timeout(config.timeout_seconds, connect=min(5, config.timeout_seconds)),
+                                  follow_redirects=False, transport=network)
         self.traces: list[dict] = []
         self.sender_kinds = None
         self.sender_roles = {}
@@ -325,7 +331,7 @@ class XHubProvider:
         except httpx.HTTPError as error:
             trace["error"] = "transport_error"
             trace["transport_error_type"] = type(error).__name__
-            raise XHubTransientError("XHub 网络请求失败或超时；未自动重试") from None
+            raise XHubTransientError("XHub 连接或读取失败；请求发出后的超时不会自动重发") from None
         except (KeyError, IndexError, TypeError, ValueError) as error:
             trace["error"] = "contract_error" if isinstance(error, ContractError) else "protocol_error"
             if isinstance(error, ContractError):
