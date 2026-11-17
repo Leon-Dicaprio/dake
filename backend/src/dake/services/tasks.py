@@ -108,8 +108,13 @@ class TaskService:
         cursors = dict(previous["state"].get("customer_cursors", {})) if previous else {}
         if previous:
             for child in previous["state"].get("children", []):
-                if child.get("cursor"):
-                    cursors[child["uid"]] = child["cursor"]
+                cursor = child.get("cursor")
+                run = self.runs.get(child["run_id"]) if child.get("run_id") else None
+                # 来源可能先失败，已成功的分析子任务尚未来得及汇总到客户进度。
+                if run and run["status"] == "succeeded":
+                    cursor = run["request"]["end"]
+                if cursor:
+                    cursors[child["uid"]] = cursor
         state = dict(config=config, version=task["version"], frozen_uids=task["frozen_uids"], origin=origin.isoformat(),
             start=start.isoformat(), end=end.isoformat(), template=template, sync_run_id=None,
             window_start=start.isoformat(), window_end=min(start + duration(config["interval"]), end).isoformat(),
@@ -273,12 +278,7 @@ class TaskService:
                 child["status"] = "queued"
                 continue
             window_end = min(cursor + interval, limit)
-            pending = self._pending(state, child, cursor, window_end)
-            if not pending:
-                child["cursor"] = window_end.isoformat()
-                state.setdefault("customer_cursors", {})[child["uid"]] = child["cursor"]
-                child["status"] = "queued"
-                continue
+            # 空窗口也通过事务回执推进客户水位，业务服务会跳过模型调用。
             child["run_id"] = str(uuid4())
             child.setdefault("run_ids", []).append(child["run_id"])
             phase = "live" if cursor >= bound(child.get("catchup_target") or state["end"]) else "catchup"
@@ -293,11 +293,6 @@ class TaskService:
                 child["status"] = "queued"
                 continue
             child["status"] = "queued"
-
-    def _pending(self, state, child, start, end):
-        with self.runs.connection() as store:
-            return [message for message in store.pending_messages(child["uid"], start, end, state["template"]["analysis_stream"])
-                    if getattr(message, "conversation_id", None) in child["allowed_groups"]]
 
     def _fail_or_retry(self, execution, child, run):
         state = execution["state"]
@@ -370,9 +365,7 @@ class TaskService:
                 with self.runs.connection() as store:
                     pending = [m for m in store.pending_messages(uid, bound(state["origin"]), end,
                         state["template"]["analysis_stream"]) if m.conversation_id in allowed]
-                    if not pending:
-                        reason = "没有待处理的新消息"
-                    else:
+                    if pending:
                         origin, interval = bound(state["origin"]), duration(config["interval"])
                         earliest = origin + ((min(m.sent_at for m in pending) - origin) // interval) * interval
                         if earliest < cursor:

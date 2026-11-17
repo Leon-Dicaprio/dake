@@ -61,12 +61,17 @@ class HistoryCandidate:
     evidence_refs: tuple[dict, ...] = field(default=(), repr=False)
 
     def to_input(self):
-        """模型仅获得有预算的概述、身份、时间、状态和引用线索。"""
+        """模型仅获得有预算的概述、多标签、状态、优先级和引用线索，不塞入全量引文或人工锁历史。"""
         event = self.event
         recovery = event.recovery
-        return dict(event_id=event.event_id, type=event.type, topic_key=event.topic_key,
+        return dict(event_id=event.event_id, type=event.type,
+                    types=event.types or ([event.type] if event.type != "待分类" else []),
+                    classification_status=event.classification_status,
+                    topic_key=event.topic_key,
                     start_time=event.start_time.isoformat(), end_time=event.end_time.isoformat(),
-                    summary=event.summary, status=event.status, severity=event.severity,
+                    summary=event.summary, status=event.lifecycle_status,
+                    waiting_reason=event.waiting_reason, resolution=event.resolution,
+                    priority=event.priority, base_priority=event.base_priority,
                     assignees=event.assignees,
                     closed_at=event.closed_at.isoformat() if event.closed_at else None,
                     recovery=dict(confirmed_at=recovery["confirmed_at"], evidence_ids=[
@@ -168,7 +173,8 @@ class HistoryRetriever:
                     continue
                 evidence_ids = list(dict.fromkeys(f"{item['source']}:{item['message_id']}" for item in event.evidence))
                 facts = " ".join(f"{key} {value}" for key, value in event.attributes.items() if isinstance(value, str))
-                text = f"{event.topic_key or ''} {event.summary} {facts}".casefold()
+                labels = " ".join(event.types or [])
+                text = f"{event.topic_key or ''} {labels} {event.summary} {facts}".casefold()
                 hits = [word for word in keywords if word in text]
                 exact_event = event.event_id in event_refs
                 exact_message = any(key in evidence_ids for key in message_refs)

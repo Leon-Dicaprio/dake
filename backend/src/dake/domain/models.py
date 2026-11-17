@@ -1,14 +1,29 @@
 """与数据来源无关的消息、候选事件和事件合约；业务缺省不代表官方枚举。"""
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields as dataclass_fields
 from datetime import datetime, timedelta
 import hashlib
 import json
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
+from .priority_policy import normalize_legacy_priority
+from .status_policy import normalize_legacy_status
+
 TZ = ZoneInfo("Asia/Shanghai")
 EVENT_TYPES = ("商机", "流失", "排障", "资源需求", "功能需求", "商务需求")
+EVENT_LABELS = EVENT_TYPES + ("其他",)
+PENDING_TYPE = "待分类"
+
+# 只作为六类专属属性名称字典，不把缺失属性变成建项前置条件。
+TYPE_ATTRIBUTE_NAMES: dict[str, tuple[str, ...]] = {
+    "商机": ("交易对象与采购范围", "采购意向与评估事实", "计划规模", "预算或交易金额", "采购/上线计划时间", "成交事实及范围"),
+    "流失": ("流失对象与范围", "风险、计划与实际变化", "原因与触发条件", "减少或转移规模", "去向与执行时间", "挽留或退出办理结果"),
+    "排障": ("异常对象与环境", "症状与对照表现", "客户影响", "发生及影响范围", "排查发现与根因", "处置与验证结果", "恢复事实"),
+    "资源需求": ("资源对象与交付范围", "请求动作与用途", "现有可用量", "目标总量与增减量", "资源缺口", "期望交付与承诺", "审批、交付与可用验证"),
+    "功能需求": ("能力对象与使用场景", "当前行为及限制", "期望行为与改善目标", "验收条件", "期望可用时间", "评估与承诺范围", "上线与需求验证结果"),
+    "商务需求": ("办理对象与事项范围", "价格与金额口径", "合同与商务条件", "续费或终止安排", "账单与发票要求", "办理期限与约定", "办理事实与结果"),
+}
 
 # 人员角色用于聊天展示；业务判断仅接受已确认账号，不属于官方事件状态枚举。
 SenderRole = Literal["internal", "support", "customer", "external", "unknown"]
@@ -118,6 +133,80 @@ class Candidate:
     possible_event_ids: list[str] = field(default_factory=list)
     changes: list[dict] | None = None
     continuity: dict | None = None
+    # 多标签分类、专属属性及结构化状态/优先级提案；兼容只返回单主类型的旧实现。
+    types: list[str] | None = None
+    type_evidence: dict[str, list[dict]] = field(default_factory=dict)
+    classification_status: str = "已分类"
+    other_reason: dict | None = None
+    removed_types: dict[str, list[dict]] = field(default_factory=dict)
+    typed_attributes: dict[str, dict[str, dict]] = field(default_factory=dict)
+    classification_conflicts: list[str] = field(default_factory=list)
+    status_proposal: dict | None = None
+    priority_proposal: dict | None = None
+
+    def label_types(self) -> list[str]:
+        """返回去重后的当前标签集合；待分类返回空列表。"""
+        if self.types is not None:
+            return list(dict.fromkeys(self.types))
+        return [] if self.type == PENDING_TYPE else [self.type]
+
+
+def normalize_event_payload(value: dict) -> dict:
+    """兼容旧版单类型与未知状态/等级记录，不伪造历史逐标签证据或完成时间。"""
+    result = dict(value)
+    result["version"] = max(int(result.get("version") or 0), len(result.get("updated_by") or []))
+    if result.get("types") is None:
+        result["types"] = [result["type"]] if result.get("type") not in (None, PENDING_TYPE) else []
+    for name in ("type_evidence", "removed_types", "typed_attributes", "manual_controls"):
+        if result.get(name) is None:
+            result[name] = {}
+    for name in ("manual_operations", "review_items"):
+        if result.get(name) is None:
+            result[name] = []
+    legacy_attributes = result.pop("attribute_evidence", None)
+    if legacy_attributes and not result["typed_attributes"] and result.get("type") not in (None, PENDING_TYPE):
+        result["typed_attributes"] = {result["type"]: legacy_attributes}
+    if result.get("classification_evidence_status") is None:
+        result["classification_evidence_status"] = "已记录" if result["type_evidence"] else "未记录"
+    if result.get("classification_status") is None:
+        result["classification_status"] = "待分类" if result.get("type") == PENDING_TYPE else "已分类"
+
+    mapped_status, legacy_status = normalize_legacy_status(result.get("status"))
+    if result.get("lifecycle_status") is None:
+        result["lifecycle_status"] = mapped_status
+    if legacy_status and result.get("status_detail") is None:
+        result["status_detail"] = dict(
+            status=result["lifecycle_status"],
+            waiting_reason=result.get("waiting_reason"),
+            resolution=result.get("resolution"),
+            legacy_status=legacy_status,
+            source="legacy",
+        )
+
+    mapped_priority, legacy_severity = normalize_legacy_priority(result.get("severity"))
+    if result.get("priority") is None:
+        result["priority"] = mapped_priority
+    if result.get("base_priority") is None:
+        result["base_priority"] = result["priority"]
+    if legacy_severity and result.get("priority_detail") is None:
+        result["priority_detail"] = dict(
+            priority=result["priority"],
+            base_priority=result["base_priority"],
+            legacy_severity=legacy_severity,
+            source="legacy",
+        )
+
+    result.setdefault("other_reason", None)
+    result.setdefault("waiting_reason", None)
+    result.setdefault("resolution", None)
+    result.setdefault("status_detail", None)
+    result.setdefault("priority_detail", None)
+    if result.get("version") is None:
+        result["version"] = len(result.get("updated_by") or [])
+    return result
+
+
+normalize_classification = normalize_event_payload
 
 
 @dataclass
@@ -144,19 +233,78 @@ class Event:
     schema_version: int = 1
     recovery: dict | None = None
     recurrence_of: dict | None = None
+    # 分类与类型专属属性（保留 type 与 attributes 作为兼容投影）。
+    types: list[str] = field(default_factory=list)
+    type_evidence: dict[str, list[dict]] = field(default_factory=dict)
+    removed_types: dict[str, list[dict]] = field(default_factory=dict)
+    classification_evidence_status: str = "未记录"
+    classification_status: str = "已分类"
+    other_reason: dict | None = None
+    typed_attributes: dict[str, dict[str, dict]] = field(default_factory=dict)
+    # 生命周期状态与业务优先级（保留 status 与 severity 字符串兼容）。
+    lifecycle_status: str = "状态未明"
+    waiting_reason: str | None = None
+    resolution: str | None = None
+    status_detail: dict | None = None
+    priority: str = "待评估"
+    base_priority: str = "待评估"
+    priority_detail: dict | None = None
+    # 乐观版本、轻量人工覆盖锁与结构化待核对项。
+    version: int = 0
+    manual_controls: dict[str, dict] = field(default_factory=dict)
+    manual_operations: list[dict] = field(default_factory=list)
+    review_items: list[dict] = field(default_factory=list)
+
+    def __post_init__(self):
+        self.version = max(int(self.version or 0), len(self.updated_by))
+        if not self.types and self.type != PENDING_TYPE:
+            self.types = [self.type]
+        if self.type == PENDING_TYPE and not self.types:
+            self.classification_status = "待分类"
+        if self.type_evidence and self.classification_evidence_status == "未记录":
+            self.classification_evidence_status = "已记录"
+        mapped_status, legacy_status = normalize_legacy_status(self.status)
+        if self.lifecycle_status == "状态未明" and mapped_status != "状态未明":
+            self.lifecycle_status = mapped_status
+        elif legacy_status and self.status_detail is None:
+            self.status_detail = dict(
+                status=self.lifecycle_status,
+                waiting_reason=self.waiting_reason,
+                resolution=self.resolution,
+                legacy_status=legacy_status,
+                source="legacy",
+            )
+        mapped_priority, legacy_severity = normalize_legacy_priority(self.severity)
+        if self.priority == "待评估" and mapped_priority != "待评估":
+            self.priority = mapped_priority
+            if self.base_priority == "待评估":
+                self.base_priority = mapped_priority
+        elif legacy_severity and self.priority_detail is None:
+            self.priority_detail = dict(
+                priority=self.priority,
+                base_priority=self.base_priority,
+                legacy_severity=legacy_severity,
+                source="legacy",
+            )
 
     def to_dict(self) -> dict:
         """导出完整事件，只供数据库和私有快照使用，不直接打印到日志。"""
-        return json_value(asdict(self))
+        value = asdict(self)
+        value["version"] = max(int(self.version or 0), len(self.updated_by))
+        if not value["types"] and value["type"] != PENDING_TYPE:
+            value["types"] = [value["type"]]
+        return json_value(value)
 
     @classmethod
     def from_dict(cls, value: dict) -> "Event":
-        """从持久化结构恢复事件及其时间字段。"""
-        value = dict(value)
+        """从持久化结构恢复事件及其时间字段，忽略未来扩展或已弃用的多余键。"""
+        normalized = normalize_event_payload(value)
         for key in ("start_time", "end_time", "created_on", "closed_at"):
-            if value.get(key) is not None:
-                value[key] = parse_time(value[key])
-        return cls(**value)
+            if normalized.get(key) is not None:
+                normalized[key] = parse_time(normalized[key])
+        known_keys = {item.name for item in dataclass_fields(cls)}
+        filtered = {key: item for key, item in normalized.items() if key in known_keys}
+        return cls(**filtered)
 
 
 @dataclass

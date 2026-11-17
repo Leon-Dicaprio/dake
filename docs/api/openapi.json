@@ -45,7 +45,7 @@
             }
           },
           "422": {
-            "description": "Unprocessable Entity",
+            "description": "Unprocessable Content",
             "content": {
               "application/json": {
                 "schema": {
@@ -107,7 +107,7 @@
             }
           },
           "422": {
-            "description": "Unprocessable Entity",
+            "description": "Unprocessable Content",
             "content": {
               "application/json": {
                 "schema": {
@@ -135,7 +135,7 @@
           "events"
         ],
         "summary": "List Events",
-        "description": "按客户、分析流和可选事件类型读取当前事件。",
+        "description": "按客户、分析流及可选类型、状态、优先级筛选当前事件。",
         "operationId": "list_events",
         "parameters": [
           {
@@ -188,6 +188,40 @@
               ],
               "title": "Type"
             }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 32
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "priority",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 32
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Priority"
+            }
           }
         ],
         "responses": {
@@ -229,7 +263,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "503": {
             "content": {
@@ -338,7 +372,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "503": {
             "content": {
@@ -467,7 +501,213 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/events/{event_id}/manual-decisions": {
+      "post": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Submit Manual Decision",
+        "description": "对分类、状态、优先级或跟进人提交原子人工裁定与加解锁。",
+        "operationId": "submit_manual_decision",
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "title": "Event Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualDecisionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualDecisionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/events/{event_id}/manual-decisions/{operation_id}": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Get Manual Decision",
+        "description": "按操作编号核实人工裁定是否已落库，用于网络或提交超时后的安全查询。",
+        "operationId": "get_manual_decision",
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "title": "Event Id"
+            }
+          },
+          {
+            "name": "operation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "title": "Operation Id"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Uid"
+            }
+          },
+          {
+            "name": "stream",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stream"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualDecisionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
           },
           "503": {
             "content": {
@@ -583,7 +823,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "503": {
             "content": {
@@ -692,7 +932,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "503": {
             "content": {
@@ -807,7 +1047,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "503": {
             "content": {
@@ -921,7 +1161,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "503": {
             "content": {
@@ -976,7 +1216,7 @@
             }
           },
           "422": {
-            "description": "Unprocessable Entity",
+            "description": "Unprocessable Content",
             "content": {
               "application/json": {
                 "schema": {
@@ -1046,7 +1286,7 @@
             }
           },
           "422": {
-            "description": "Unprocessable Entity",
+            "description": "Unprocessable Content",
             "content": {
               "application/json": {
                 "schema": {
@@ -1127,7 +1367,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "503": {
             "content": {
@@ -1181,7 +1421,7 @@
             }
           },
           "422": {
-            "description": "Unprocessable Entity",
+            "description": "Unprocessable Content",
             "content": {
               "application/json": {
                 "schema": {
@@ -1250,7 +1490,7 @@
             }
           },
           "422": {
-            "description": "Unprocessable Entity",
+            "description": "Unprocessable Content",
             "content": {
               "application/json": {
                 "schema": {
@@ -1321,7 +1561,7 @@
             }
           },
           "422": {
-            "description": "Unprocessable Entity",
+            "description": "Unprocessable Content",
             "content": {
               "application/json": {
                 "schema": {
@@ -1401,7 +1641,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "503": {
             "content": {
@@ -1484,7 +1724,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "503": {
             "content": {
@@ -1567,7 +1807,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "503": {
             "content": {
@@ -1640,7 +1880,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "503": {
             "content": {
@@ -1694,7 +1934,7 @@
             }
           },
           "422": {
-            "description": "Unprocessable Entity",
+            "description": "Unprocessable Content",
             "content": {
               "application/json": {
                 "schema": {
@@ -1763,7 +2003,7 @@
             }
           },
           "422": {
-            "description": "Unprocessable Entity",
+            "description": "Unprocessable Content",
             "content": {
               "application/json": {
                 "schema": {
@@ -1867,7 +2107,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "503": {
             "content": {
@@ -1965,6 +2205,41 @@
             "type": "array",
             "title": "Event Types"
           },
+          "filter_event_types": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Filter Event Types"
+          },
+          "lifecycle_statuses": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Lifecycle Statuses"
+          },
+          "waiting_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Waiting Reasons"
+          },
+          "resolutions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Resolutions"
+          },
+          "priorities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Priorities"
+          },
           "provider": {
             "type": "string",
             "enum": [
@@ -1993,6 +2268,11 @@
           "ingest_lookback",
           "closed_grace",
           "event_types",
+          "filter_event_types",
+          "lifecycle_statuses",
+          "waiting_reasons",
+          "resolutions",
+          "priorities",
           "provider",
           "customers"
         ],
@@ -3374,6 +3654,84 @@
             "type": "string",
             "title": "Type"
           },
+          "types": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Types"
+          },
+          "type_evidence": {
+            "additionalProperties": {
+              "items": {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Type Evidence"
+          },
+          "removed_types": {
+            "additionalProperties": {
+              "items": {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Removed Types"
+          },
+          "classification_evidence_status": {
+            "type": "string",
+            "enum": [
+              "已记录",
+              "未记录"
+            ],
+            "title": "Classification Evidence Status",
+            "default": "未记录"
+          },
+          "classification_status": {
+            "type": "string",
+            "enum": [
+              "已分类",
+              "待分类"
+            ],
+            "title": "Classification Status",
+            "default": "已分类"
+          },
+          "other_reason": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Other Reason"
+          },
+          "typed_attributes": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Typed Attributes"
+          },
           "topic_key": {
             "anyOf": [
               {
@@ -3397,9 +3755,108 @@
             "type": "string",
             "title": "Status"
           },
+          "lifecycle_status": {
+            "type": "string",
+            "enum": [
+              "状态未明",
+              "跟进中",
+              "等待中",
+              "已解决",
+              "已取消"
+            ],
+            "title": "Lifecycle Status",
+            "default": "状态未明"
+          },
+          "waiting_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "等待客户",
+                  "等待内部支撑",
+                  "等待其他方"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting Reason"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "客户确认恢复",
+                  "支撑声明已修复",
+                  "已答复或已交付",
+                  "已拒绝",
+                  "已撤回",
+                  "确认不成立"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution"
+          },
+          "status_detail": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Detail"
+          },
           "severity": {
             "type": "string",
             "title": "Severity"
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "P0",
+              "P1",
+              "P2",
+              "P3",
+              "待评估"
+            ],
+            "title": "Priority",
+            "default": "待评估"
+          },
+          "base_priority": {
+            "type": "string",
+            "enum": [
+              "P0",
+              "P1",
+              "P2",
+              "P3",
+              "待评估"
+            ],
+            "title": "Base Priority",
+            "default": "待评估"
+          },
+          "priority_detail": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority Detail"
           },
           "summary": {
             "type": "string",
@@ -3447,6 +3904,35 @@
               }
             ],
             "title": "Review Flag"
+          },
+          "review_items": {
+            "items": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Review Items"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version",
+            "default": 0
+          },
+          "manual_controls": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ManualControlResponse"
+            },
+            "type": "object",
+            "title": "Manual Controls"
+          },
+          "manual_operations": {
+            "items": {
+              "$ref": "#/components/schemas/ManualOperationResponse"
+            },
+            "type": "array",
+            "title": "Manual Operations"
           },
           "closed_at": {
             "anyOf": [
@@ -3512,11 +3998,25 @@
           "uid",
           "stream",
           "type",
+          "types",
+          "type_evidence",
+          "removed_types",
+          "classification_evidence_status",
+          "classification_status",
+          "other_reason",
+          "typed_attributes",
           "topic_key",
           "start_time",
           "end_time",
           "status",
+          "lifecycle_status",
+          "waiting_reason",
+          "resolution",
+          "status_detail",
           "severity",
+          "priority",
+          "base_priority",
+          "priority_detail",
           "summary",
           "created_on",
           "assignees",
@@ -3524,6 +4024,10 @@
           "attributes",
           "extensions",
           "review_flag",
+          "review_items",
+          "version",
+          "manual_controls",
+          "manual_operations",
           "closed_at",
           "recovery",
           "recurrence_of",
@@ -3544,6 +4048,15 @@
               "updated"
             ],
             "title": "Action"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "automatic",
+              "manual"
+            ],
+            "title": "Source",
+            "default": "automatic"
           },
           "window_start": {
             "type": "string",
@@ -3602,7 +4115,9 @@
                   "progress",
                   "confirmation",
                   "correction",
-                  "evidence_only"
+                  "evidence_only",
+                  "classification",
+                  "manual"
                 ]
               },
               {
@@ -3647,6 +4162,16 @@
             "type": "array",
             "title": "Changes"
           },
+          "manual_operation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManualOperationResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "policy_version": {
             "anyOf": [
               {
@@ -3662,6 +4187,7 @@
         "type": "object",
         "required": [
           "action",
+          "source",
           "window_start",
           "window_end",
           "message_ids",
@@ -3673,10 +4199,11 @@
           "summary_changed",
           "changed_fields",
           "changes",
+          "manual_operation",
           "policy_version"
         ],
         "title": "EventRevision",
-        "description": "记录哪一次处理、哪些消息创建或更新了事件。"
+        "description": "记录哪一次处理、哪些消息或人工裁定创建或更新了事件。"
       },
       "EventSnapshot": {
         "properties": {
@@ -3695,6 +4222,84 @@
           "type": {
             "type": "string",
             "title": "Type"
+          },
+          "types": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Types"
+          },
+          "type_evidence": {
+            "additionalProperties": {
+              "items": {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Type Evidence"
+          },
+          "removed_types": {
+            "additionalProperties": {
+              "items": {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Removed Types"
+          },
+          "classification_evidence_status": {
+            "type": "string",
+            "enum": [
+              "已记录",
+              "未记录"
+            ],
+            "title": "Classification Evidence Status",
+            "default": "未记录"
+          },
+          "classification_status": {
+            "type": "string",
+            "enum": [
+              "已分类",
+              "待分类"
+            ],
+            "title": "Classification Status",
+            "default": "已分类"
+          },
+          "other_reason": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Other Reason"
+          },
+          "typed_attributes": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Typed Attributes"
           },
           "topic_key": {
             "anyOf": [
@@ -3719,9 +4324,108 @@
             "type": "string",
             "title": "Status"
           },
+          "lifecycle_status": {
+            "type": "string",
+            "enum": [
+              "状态未明",
+              "跟进中",
+              "等待中",
+              "已解决",
+              "已取消"
+            ],
+            "title": "Lifecycle Status",
+            "default": "状态未明"
+          },
+          "waiting_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "等待客户",
+                  "等待内部支撑",
+                  "等待其他方"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting Reason"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "客户确认恢复",
+                  "支撑声明已修复",
+                  "已答复或已交付",
+                  "已拒绝",
+                  "已撤回",
+                  "确认不成立"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution"
+          },
+          "status_detail": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Detail"
+          },
           "severity": {
             "type": "string",
             "title": "Severity"
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "P0",
+              "P1",
+              "P2",
+              "P3",
+              "待评估"
+            ],
+            "title": "Priority",
+            "default": "待评估"
+          },
+          "base_priority": {
+            "type": "string",
+            "enum": [
+              "P0",
+              "P1",
+              "P2",
+              "P3",
+              "待评估"
+            ],
+            "title": "Base Priority",
+            "default": "待评估"
+          },
+          "priority_detail": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority Detail"
           },
           "summary": {
             "type": "string",
@@ -3770,6 +4474,35 @@
             ],
             "title": "Review Flag"
           },
+          "review_items": {
+            "items": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Review Items"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version",
+            "default": 0
+          },
+          "manual_controls": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ManualControlResponse"
+            },
+            "type": "object",
+            "title": "Manual Controls"
+          },
+          "manual_operations": {
+            "items": {
+              "$ref": "#/components/schemas/ManualOperationResponse"
+            },
+            "type": "array",
+            "title": "Manual Operations"
+          },
           "closed_at": {
             "anyOf": [
               {
@@ -3813,11 +4546,25 @@
           "uid",
           "stream",
           "type",
+          "types",
+          "type_evidence",
+          "removed_types",
+          "classification_evidence_status",
+          "classification_status",
+          "other_reason",
+          "typed_attributes",
           "topic_key",
           "start_time",
           "end_time",
           "status",
+          "lifecycle_status",
+          "waiting_reason",
+          "resolution",
+          "status_detail",
           "severity",
+          "priority",
+          "base_priority",
+          "priority_detail",
           "summary",
           "created_on",
           "assignees",
@@ -3825,6 +4572,10 @@
           "attributes",
           "extensions",
           "review_flag",
+          "review_items",
+          "version",
+          "manual_controls",
+          "manual_operations",
           "closed_at",
           "recovery",
           "recurrence_of",
@@ -4620,6 +5371,345 @@
         "description": "本地服务健康状态，不携带运行凭据。"
       },
       "JsonValue": {},
+      "ManualControlResponse": {
+        "properties": {
+          "field": {
+            "type": "string",
+            "enum": [
+              "types",
+              "status",
+              "priority",
+              "assignees"
+            ],
+            "title": "Field"
+          },
+          "locked": {
+            "type": "boolean",
+            "title": "Locked",
+            "default": false
+          },
+          "operator": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "adopted_value": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JsonValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pending_conflict": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Conflict"
+          }
+        },
+        "type": "object",
+        "required": [
+          "field",
+          "locked",
+          "operator",
+          "reason",
+          "decided_at",
+          "adopted_value",
+          "pending_conflict"
+        ],
+        "title": "ManualControlResponse",
+        "description": "单个受控核心字段的人工锁定与待核对冲突视图。"
+      },
+      "ManualDecisionRequest": {
+        "properties": {
+          "uid": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Uid"
+          },
+          "stream": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Stream"
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Version"
+          },
+          "operation_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Operation Id"
+          },
+          "operator": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Operator"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Reason"
+          },
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/ManualFieldAction"
+            },
+            "type": "array",
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Actions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "uid",
+          "stream",
+          "expected_version",
+          "operation_id",
+          "operator",
+          "reason",
+          "actions"
+        ],
+        "title": "ManualDecisionRequest",
+        "description": "针对核心管理字段的原子人工裁定请求。"
+      },
+      "ManualDecisionResponse": {
+        "properties": {
+          "event": {
+            "$ref": "#/components/schemas/EventResponse"
+          },
+          "operation": {
+            "$ref": "#/components/schemas/ManualOperationResponse"
+          },
+          "idempotent_replay": {
+            "type": "boolean",
+            "title": "Idempotent Replay",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "event",
+          "operation",
+          "idempotent_replay"
+        ],
+        "title": "ManualDecisionResponse",
+        "description": "人工裁定提交或查询结果，包含更新后的事件与对应收据。"
+      },
+      "ManualFieldAction": {
+        "properties": {
+          "field": {
+            "type": "string",
+            "enum": [
+              "types",
+              "status",
+              "priority",
+              "assignees"
+            ],
+            "title": "Field"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "set",
+              "lock",
+              "unlock",
+              "adopt_conflict",
+              "dismiss_conflict"
+            ],
+            "title": "Action"
+          },
+          "types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Types"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "waiting_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting Reason"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution"
+          },
+          "priority": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority"
+          },
+          "assignees": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignees"
+          },
+          "locked": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Locked"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "field",
+          "action"
+        ],
+        "title": "ManualFieldAction",
+        "description": "单个核心字段的人工覆盖或锁定动作。"
+      },
+      "ManualOperationResponse": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          },
+          "request_digest": {
+            "type": "string",
+            "title": "Request Digest"
+          },
+          "operator": {
+            "type": "string",
+            "title": "Operator"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "decided_at": {
+            "type": "string",
+            "title": "Decided At"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "actions": {
+            "items": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Actions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation_id",
+          "request_digest",
+          "operator",
+          "reason",
+          "decided_at",
+          "version",
+          "actions"
+        ],
+        "title": "ManualOperationResponse",
+        "description": "已提交的人工裁定操作收据。"
+      },
       "NormalizedRunRequest": {
         "properties": {
           "mode": {

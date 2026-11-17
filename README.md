@@ -53,6 +53,24 @@ MySQL 8.4 仅监听 `127.0.0.1:3307`，数据库默认 `dake_aftersales`，应�
 
 `docker compose stop mysql` 可停止数据库；再次运行启动命令会使用原有数据。初始化账号和密码只在空数据目录首次启动时生效，修改 `.env` 不会自动修改已有数据库密码。
 
+## Windows 本机启动
+
+使用 Windows Python 3.11+、Node.js 24 和已启动的 Docker Desktop（Linux 容器）。项目放在 Windows 磁盘目录；不要复制 Linux 的 `.venv`、`node_modules` 或 MySQL 数据目录。
+
+在项目根目录的 PowerShell 执行：
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r backend/requirements.lock
+.\.venv\Scripts\python.exe -m pip install -e ./backend --no-deps
+npm.cmd --prefix web ci
+powershell -ExecutionPolicy Bypass -File scripts/start-windows.ps1 -Initialize
+```
+
+首次启动前准备根 `.env`；使用独立的本地数据库和新密码。`-Initialize` 只接受没有任何表的空库，显式执行建表及迁移，不删除数据、不创建任务、不调用外部接口。后续启动去掉 `-Initialize`。脚本打开前后端两个窗口，页面为 <http://localhost:8000>；关闭窗口即可停止对应服务。切换前先停止旧 WSL 前后端和 MySQL，避免占用 8000、8001、3307。
+
+文件锁支持 Linux 和 Windows，时区由 `tzdata` 提供。Windows 私有配置及 `data/` 的访问权限由目录 ACL 控制，应限定当前用户；POSIX 的 0600 权限数字不能替代 Windows ACL。迁移系统不代表数据库高频短连接问题已经解决，持续运行仍需单独验证。
+
 ## 网页与接口
 
 在两个终端分别启动服务。以下命令从仓库根目录执行。

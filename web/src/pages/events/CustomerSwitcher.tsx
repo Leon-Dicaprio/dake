@@ -137,11 +137,12 @@ export function CustomerSwitcher({
             className={`customer-switcher-trigger ${isAll ? 'is-all' : ''}`}
             aria-label="切换客户"
           >
+            <UsersRound size={16} className="customer-trigger-icon" />
             <span className="customer-trigger-copy">
               <span className="customer-trigger-name">
                 {isAll ? '全部客户' : current?.label || `客户 ${uid}`}
               </span>
-              <small>{isAll ? '查看全部客户的事件' : `UID ${uid}`}</small>
+              {!isAll && <small>UID {uid}</small>}
             </span>
             {currentBadge?.kind === 'super' && (
               <span className="customer-tier-pill super">

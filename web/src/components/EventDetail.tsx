@@ -7,7 +7,9 @@ import {
   UserRound,
 } from 'lucide-react';
 import { formatTime } from '@/lib/utils';
-import { EventType } from './EventType';
+import { ClassificationDetails } from './ClassificationDetails';
+import { PriorityBadge, StatusBadge } from './EventBadges';
+import { EventType, eventDisplayLabels } from './EventType';
 import { ErrorNotice, LoadingRows } from './Feedback';
 import {
   Dialog,
@@ -72,7 +74,9 @@ export function EventDetail({
           event && (
             <div className="event-detail-body">
               <div className="detail-badges">
-                <EventType type={event.type} />
+                {eventDisplayLabels(event).map((label) => (
+                  <EventType key={label} type={label} />
+                ))}
                 {historical && <span className="badge">历史快照</span>}
               </div>
               <h2>{event.summary}</h2>
@@ -80,9 +84,7 @@ export function EventDetail({
                 事件编号 <span>{event.event_id}</span>
               </div>
               {event.review_flag && (
-                <div className="notice notice-warning">
-                  {event.review_flag}，需要进一步核对。
-                </div>
+                <div className="notice notice-warning">{event.review_flag}</div>
               )}
               <dl className="detail-metadata">
                 <div>
@@ -99,15 +101,22 @@ export function EventDetail({
                 <div>
                   <dt>当前状态</dt>
                   <dd>
-                    <span className="status-label">
-                      <i />
-                      {event.status}
-                    </span>
+                    <StatusBadge
+                      status={event.lifecycle_status || event.status}
+                      waitingReason={event.waiting_reason}
+                      resolution={event.resolution}
+                    />
                   </dd>
                 </div>
                 <div>
-                  <dt>事件等级</dt>
-                  <dd>{event.severity}</dd>
+                  <dt>优先级</dt>
+                  <dd>
+                    <PriorityBadge
+                      priority={event.priority}
+                      basePriority={event.base_priority}
+                      detail={event.priority_detail}
+                    />
+                  </dd>
                 </div>
                 <div>
                   <dt>客户</dt>
@@ -125,6 +134,7 @@ export function EventDetail({
                   <dd>{formatTime(event.end_time)}</dd>
                 </div>
               </dl>
+              <ClassificationDetails event={event} />
               {Object.keys(event.attributes).length > 0 && (
                 <section className="detail-section">
                   <h3>

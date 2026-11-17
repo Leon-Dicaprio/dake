@@ -1,6 +1,9 @@
-import { Crown } from 'lucide-react';
+import { AlertTriangle, Crown, Lock } from 'lucide-react';
 import { useRef, useState } from 'react';
-import { EventType } from '@/components/EventType';
+import { ClassificationDetails } from '@/components/ClassificationDetails';
+import { PriorityBadge, StatusBadge } from '@/components/EventBadges';
+import { EventType, eventDisplayLabels } from '@/components/EventType';
+import { ManualDecisionDialog } from '@/components/ManualDecisionDialog';
 import { formatTime } from '@/lib/utils';
 import { ChatMessage } from './ChatMessage';
 import { customerTierBadge } from './CustomerSwitcher';
@@ -170,15 +173,29 @@ export function EventPane({
   customer,
   isAllCustomers = false,
   onSelectCustomer,
+  onEventUpdated,
 }: {
   event: API.EventResponse;
   customer?: API.CustomerResponse;
   isAllCustomers?: boolean;
   onSelectCustomer?: (uid: string, stream?: string) => void;
+  onEventUpdated?: (updated: API.EventResponse) => void;
 }) {
   const chat = useRef<HTMLOListElement>(null);
   const [focused, setFocused] = useState('');
   const tierBadge = customerTierBadge(customer);
+  const labels = eventDisplayLabels(event);
+  const controls = event.manual_controls || {};
+  const priorityNote =
+    typeof event.priority_detail?.level_note === 'string'
+      ? event.priority_detail.level_note
+      : typeof event.priority_detail?.reason === 'string'
+        ? event.priority_detail.reason
+        : '';
+  const statusNote =
+    typeof event.status_detail?.reason === 'string'
+      ? event.status_detail.reason
+      : '';
   function locate(key: string) {
     const row = Array.from(
       chat.current?.querySelectorAll<HTMLElement>('[data-evidence-key]') || [],
@@ -213,7 +230,9 @@ export function EventPane({
     <>
       <section className="inbox-chat" aria-label="相关聊天">
         <header className="event-chat-header">
-          <p className="pane-eyebrow">原文证据</p>
+          <p className="event-chat-account">
+            {customer?.label || `客户 ${event.uid}`}
+          </p>
           <ExpandableText
             as="h2"
             lines={2}
@@ -292,8 +311,19 @@ export function EventPane({
         </p>
       </section>
       <aside className="inbox-aside" aria-label="事件详情">
-        <h2 className="event-aside-title">事件详情</h2>
+        <div className="event-aside-head">
+          <h2 className="event-aside-title">事件详情</h2>
+          {onEventUpdated ? (
+            <ManualDecisionDialog event={event} onUpdated={onEventUpdated} />
+          ) : null}
+        </div>
         <div className="event-aside inbox-pane-scroll" key={event.event_id}>
+          {event.review_flag ? (
+            <div className="aside-review-banner" role="status">
+              <AlertTriangle size={14} />
+              <span>{event.review_flag}</span>
+            </div>
+          ) : null}
           <dl className="aside-summary">
             <dt>摘要</dt>
             <dd>
@@ -307,14 +337,31 @@ export function EventPane({
           </dl>
           <dl className="aside-fields">
             <div>
-              <dt>类型</dt>
-              <dd>
-                <EventType type={event.type} />
+              <dt>
+                分类标签
+                {controls.types?.locked ? (
+                  <Lock size={11} className="inline-lock-icon" />
+                ) : null}
+              </dt>
+              <dd className="aside-type-badges">
+                {labels.map((label) => (
+                  <EventType key={label} type={label} />
+                ))}
               </dd>
             </div>
             <div>
-              <dt>事件等级</dt>
-              <dd>{event.severity || '未知'}</dd>
+              <dt>优先级</dt>
+              <dd className="aside-priority-cell">
+                <PriorityBadge
+                  priority={event.priority}
+                  basePriority={event.base_priority}
+                  detail={event.priority_detail}
+                  locked={Boolean(controls.priority?.locked)}
+                />
+                {priorityNote ? (
+                  <small className="aside-field-note">{priorityNote}</small>
+                ) : null}
+              </dd>
             </div>
             <div>
               <dt>客户 UID</dt>
@@ -374,58 +421,88 @@ export function EventPane({
             <h3 id="event-handling">跟进信息</h3>
             <dl>
               <div>
-                <dt>跟进人</dt>
+                <dt>
+                  跟进人
+                  {controls.assignees?.locked ? (
+                    <Lock size={11} className="inline-lock-icon" />
+                  ) : null}
+                </dt>
                 <dd>{assignee || '未分配'}</dd>
               </div>
               <div>
                 <dt>状态</dt>
-                <dd>{status || '—'}</dd>
+                <dd className="aside-status-cell">
+                  <StatusBadge
+                    status={event.lifecycle_status || status || '状态未明'}
+                    waitingReason={event.waiting_reason}
+                    resolution={event.resolution}
+                    locked={Boolean(controls.status?.locked)}
+                  />
+                  {statusNote ? (
+                    <small className="aside-field-note">{statusNote}</small>
+                  ) : null}
+                </dd>
               </div>
             </dl>
           </section>
+          <ClassificationDetails
+            event={event}
+            evidence={evidence}
+            onLocate={locate}
+          />
           <RecoveryDetails event={event} />
           <section className="aside-timeline" aria-label="历次变化">
             <h3>历次变化</h3>
             {event.updated_by.length ? (
               <ol>
-                {event.updated_by.map((revision, index) => {
-                  const proof = revisionEvidence(
-                    revision,
-                    event.updated_by[index - 1]?.snapshot,
-                    evidence,
-                  );
-                  return (
-                    <li
-                      key={`${revision.revision_no ?? index}:${revision.window_start}`}
-                    >
-                      <strong>
-                        {revision.action === 'created'
-                          ? '创建事件'
-                          : '更新事件'}
-                      </strong>
-                      <small>
-                        {formatTime(revision.window_start)} —{' '}
-                        {formatTime(revision.window_end)}
-                      </small>
-                      <p>
-                        {revision.change_summary ||
-                          revisionHeadline(revision) ||
-                          '已保存本轮变化'}
-                      </p>
-                      {proof.locatable.map((key, position) => (
-                        <button
-                          type="button"
-                          key={key}
-                          className="evidence-locate"
-                          onClick={() => locate(key)}
-                        >
-                          定位原文
-                          {proof.locatable.length > 1 ? ` ${position + 1}` : ''}
-                        </button>
-                      ))}
-                    </li>
-                  );
-                })}
+                {event.updated_by
+                  .map((revision, index) => {
+                    const proof = revisionEvidence(
+                      revision,
+                      event.updated_by[index - 1]?.snapshot,
+                      evidence,
+                    );
+                    const isManual =
+                      revision.source === 'manual' ||
+                      revision.change_kind === 'manual';
+                    return (
+                      <li
+                        key={`${revision.revision_no ?? index}:${revision.window_start}`}
+                      >
+                        <strong>
+                          {revision.action === 'created'
+                            ? '创建事件'
+                            : isManual
+                              ? '人工裁定'
+                              : '更新事件'}
+                        </strong>
+                        <small>
+                          {isManual && revision.recorded_at
+                            ? formatTime(revision.recorded_at)
+                            : `${formatTime(revision.window_start)} — ${formatTime(revision.window_end)}`}
+                        </small>
+                        <p>
+                          {revision.change_summary ||
+                            revisionHeadline(revision) ||
+                            '已保存本轮变化'}
+                        </p>
+                        {proof.locatable.map((key, position) => (
+                          <button
+                            type="button"
+                            key={key}
+                            className="evidence-locate"
+                            onClick={() => locate(key)}
+                          >
+                            定位原文
+                            {proof.locatable.length > 1
+                              ? ` ${position + 1}`
+                              : ''}
+                          </button>
+                        ))}
+                      </li>
+                    );
+                  })
+                  .reverse()}
               </ol>
             ) : (
               <p>暂无已保存的变化记录</p>

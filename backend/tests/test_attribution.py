@@ -260,9 +260,14 @@ def test_snapshot_failure_retry_keeps_committed_receipt(tmp_path, monkeypatch):
 
 def model_output(msg, **changes):
     """完整的虚构模型协议，不依赖已有聊天夹具。"""
-    value = dict(type="排障", topic_key=TOPIC, summary=msg.content, evidence_ids=[msg.key], status=None,
+    event_type = changes.get("type", "排障")
+    default_labels = [] if event_type == "待分类" else [dict(type=event_type, evidence_ids=[msg.key], quote=msg.content)]
+    value = dict(type=event_type, topic_key=TOPIC, summary=msg.content, evidence_ids=[msg.key], status=None,
                  severity=None, assignees=[], attributes=[], extensions=[], decision="new",
                  referenced_event_id=None, decision_reason="新消息明确描述独立事项",
+                 type_labels=default_labels, removed_types=[], typed_attributes=[],
+                 classification_status="待分类" if event_type == "待分类" else "已分类",
+                 other_reason=None, status_proposal=None, priority_proposal=None,
                  basis=[dict(message_id=msg.key, quote=msg.content)], possible_event_ids=[], continuity=None,
                  changes=[] if changes.get("decision") in {"duplicate", "review"} else [dict(
                      kind="progress", text=msg.content, evidence=[dict(message_id=msg.key, quote=msg.content)], replaces=None)])

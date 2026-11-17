@@ -79,7 +79,7 @@ test('查找候选、配置当前群、保存后保留以及启停规则', async
   await expect(
     page.getByRole('heading', { name: '机器人筛选', exact: true }),
   ).toBeVisible();
-  await page.getByRole('button', { name: '查找账号', exact: true }).click();
+  await page.getByRole('tab', { name: '查找账号', exact: true }).click();
   await page
     .getByRole('button', { name: '查找 MAAS 账号', exact: true })
     .click();
@@ -105,7 +105,7 @@ test('查找候选、配置当前群、保存后保留以及启停规则', async
 test('跨页面修改冲突保留表单，不显示保存成功', async ({ page }) => {
   const state = await mockSettings(page);
   await page.goto('/settings/bots');
-  await page.getByRole('button', { name: '查找账号', exact: true }).click();
+  await page.getByRole('tab', { name: '查找账号', exact: true }).click();
   await page.getByRole('button', { name: '配置账号', exact: true }).click();
   await page
     .getByRole('dialog')

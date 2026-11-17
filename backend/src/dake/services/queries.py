@@ -5,7 +5,10 @@ from datetime import timedelta
 
 from ..analysis.providers.xhub import configured_stream
 from ..domain.customer_policy import customer_segment, is_super_large
-from ..domain.models import EVENT_TYPES, parse_time
+from ..domain.manual_controls import is_locked
+from ..domain.models import EVENT_LABELS, EVENT_TYPES, PENDING_TYPE, parse_time
+from ..domain.priority_policy import PRIORITIES, apply_customer_tier, event_priority_sort_key
+from ..domain.status_policy import LIFECYCLE_STATUSES, RESOLUTIONS, WAITING_REASONS
 from ..ingestion.client import validate_uid
 from ..repositories.mysql import MySQLStore, StorageError
 from ..repositories.attempts import AttemptRepository
@@ -142,18 +145,54 @@ class QueryService:
                     match_window=duration_label(self.settings.match_window),
                     ingest_lookback=duration_label(self.settings.ingest_lookback),
                     closed_grace=duration_label(self.settings.closed_grace),
-                    event_types=list(EVENT_TYPES), provider=self.settings.provider, customers=customers)
+                    event_types=list(EVENT_TYPES),
+                    filter_event_types=[*EVENT_LABELS, PENDING_TYPE],
+                    lifecycle_statuses=list(LIFECYCLE_STATUSES),
+                    waiting_reasons=list(WAITING_REASONS),
+                    resolutions=list(RESOLUTIONS),
+                    priorities=list(PRIORITIES),
+                    provider=self.settings.provider, customers=customers)
 
-    def events(self, uid=None, stream=None, event_type=None):
-        """返回当前事件版本，类型筛选保持官方六类，不改变事件身份。"""
+    def events(self, uid=None, stream=None, event_type=None, status=None, priority=None):
+        """返回当前事件版本，支持多标签、生命周期状态和业务优先级筛选与分层排序。"""
         uid, stream = self.scope(uid, stream)
-        if event_type is not None and event_type not in EVENT_TYPES:
-            raise ValueError("事件类型须为官方六类之一")
+        if event_type is not None and event_type not in (*EVENT_LABELS, PENDING_TYPE):
+            raise ValueError("事件类型须为官方六类、其他或待分类之一")
+        if status is not None and status not in LIFECYCLE_STATUSES:
+            raise ValueError("事件状态不在允许的五类生命周期状态中")
+        if priority is not None and priority not in PRIORITIES:
+            raise ValueError("事件优先级不在允许档位中")
         with self.connection() as store:
             events = store.list_events(uid, stream)
-            items = [event.to_dict() for event in events if event_type is None or event.type == event_type]
+            profile = None
+            reader = getattr(store, "customer_profile", None)
+            if reader is not None:
+                try:
+                    profile = reader(uid)
+                except StorageError:
+                    profile = None
+            items = []
+            for event in events:
+                if profile is not None and event.base_priority != "待评估" and not is_locked(event, "priority"):
+                    tiered = apply_customer_tier(
+                        event.base_priority,
+                        profile.get("level"),
+                        profile.get("level_state"),
+                    )
+                    event.priority = tiered["priority"]
+                    detail = dict(event.priority_detail or {})
+                    detail.update(tiered)
+                    event.priority_detail = detail
+                if event_type is not None and event.type != event_type and event_type not in (event.types or []):
+                    continue
+                if status is not None and event.lifecycle_status != status:
+                    continue
+                if priority is not None and event.priority != priority:
+                    continue
+                items.append(event.to_dict())
             items = enrich_events(store, uid, items, load_sender_roles(self.settings.data_dir),
                                   load_sender_kinds(self.settings.data_dir))
+            items.sort(key=lambda item: event_priority_sort_key(item, profile))
         return {"items": items, "total": len(items)}
 
     def event(self, event_id, uid=None, stream=None):

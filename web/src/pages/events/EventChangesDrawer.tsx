@@ -386,7 +386,7 @@ export function EventChangesDrawer({ event }: { event?: API.EventResponse }) {
       }}
     >
       <DialogTrigger asChild>
-        <Button variant="ghost" disabled={!event}>
+        <Button variant="primary" disabled={!event}>
           <ListChecks size={16} />
           变化面板
         </Button>

@@ -147,11 +147,15 @@ export function revisionChangeText(revision: API.EventRevision) {
 
 export function revisionHeadline(revision: {
   action: API.EventRevision['action'];
+  source?: API.EventRevision['source'];
   message_ids: string[];
   change_kind?: API.EventRevision['change_kind'];
   summary_changed?: boolean | null;
 }) {
   if (revision.action === 'created') return '首次识别';
+  if (revision.source === 'manual' || revision.change_kind === 'manual')
+    return '人工裁定';
+  if (revision.change_kind === 'classification') return '分类与状态更新';
   if (revision.change_kind === 'evidence_only') return '证据补充';
   if (revision.change_kind === 'confirmation') return '进展确认';
   if (revision.change_kind === 'correction') return '结论更正';
