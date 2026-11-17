@@ -55,7 +55,7 @@ def event(number=1, day=1, **changes):
     item = message(f"old-evidence-{number}", day)
     value = Event(str(UUID(int=number)), UID, STREAM, "排障", "星舟网关/连接超时",
                   item.sent_at, item.sent_at, "虚构待排查", "未知", "星舟网关连接超时", window(day).start,
-                  evidence=[dict(source=item.source, message_id=item.message_id,
+                  evidence=[dict(source=item.source, conversation_id=item.conversation_id, message_id=item.message_id,
                                  send_time=item.sent_at.isoformat(), excerpt="虚构证据不应进入候选", digest=item.digest)])
     value = replace(value, **changes)
     snapshot = value.to_dict()
@@ -71,6 +71,9 @@ class ObservedStore(MemoryStore):
     def __init__(self, *events):
         super().__init__()
         self.events = {item.event_id: deepcopy(item) for item in events}
+        for stored in self.events.values():
+            with self.transaction(stored.uid):
+                self.index_event_groups(stored)
         self.head_calls, self.snapshot_calls = [], []
 
     def history_event_heads(self, uid, stream, before, **kwargs):
@@ -105,7 +108,8 @@ def build(tmp_path, messages, mapping=None):
 def test_sequential_batches_retrieve_three_and_ten_day_old_events(tmp_path, distance):
     old, new = message("opening", 1), message("follow", 1 + distance)
     service, store, _, provider = build(tmp_path, [old, new], {
-        old.message_id: Candidate("排障", "星舟网关/连接超时", "星舟网关连接超时", [old.key]),
+        old.message_id: Candidate("排障", "星舟网关/连接超时", "星舟网关连接超时", [old.key],
+            decision="new", decision_reason="虚构首次记录", basis=[dict(message_id=old.key, quote=old.content)]),
     })
     first = service.run_window(UID, window(1))
     original = deepcopy(store.events)
@@ -125,7 +129,8 @@ def test_zero_and_multiple_hits_do_not_decide_or_write():
     store = ObservedStore(event(1, 1), event(2, 9))
     original = deepcopy(store.events)
     none = retrieve(store, message(content="橙鹿票据核验"))
-    assert none.candidates == [] and not none.metadata()["incomplete"]
+    assert len(none.candidates) == 2 and not none.metadata()["incomplete"]
+    assert all("conversation_candidate" in c.hit_reasons for c in none.candidates)
     many = retrieve(store)
     assert len(many.candidates) == 2
     assert many.candidates[0].event.event_id == str(UUID(int=2))
@@ -138,7 +143,7 @@ def test_explicit_event_id_has_a_separate_bounded_lookup():
     store = ObservedStore(old, *[event(number, 3) for number in range(2, 8)])
     limits = HistoryRetrievalSettings(page_size=1, recent_pages=1, older_pages=1)
     result = retrieve(store, message(content=f"event_id={old.event_id}"), limits)
-    assert [candidate.event.event_id for candidate in result.candidates] == [old.event_id]
+    assert result.candidates[0].event.event_id == old.event_id
     assert "exact_event_id" in result.candidates[0].hit_reasons
     assert result.scanned == 2 and result.scan_limited
     assert store.head_calls[0][3]["event_ids"] == [old.event_id]
@@ -154,7 +159,8 @@ def test_full_message_reference_is_exact_only_inside_scanned_evidence():
     result = retrieve(store, message(content=f"message_id={SOURCE}:old-evidence-1"))
     assert [c.event.event_id for c in result.candidates] == [old.event_id]
     assert "exact_message_key" in result.candidates[0].hit_reasons
-    assert retrieve(store, message(content="123456789")).candidates == []
+    assert all("exact_message_key" not in c.hit_reasons
+               for c in retrieve(store, message(content="123456789")).candidates)
 
 
 def test_request_number_is_only_a_keyword_not_an_authoritative_identifier():
@@ -201,7 +207,7 @@ def test_current_projection_is_not_used_as_a_historical_summary():
     store = ObservedStore(old)
     result = retrieve(store)
     assert result.candidates[0].event.summary == "星舟网关连接超时"
-    assert retrieve(store, message(content="橙鹿票据")).candidates == []
+    assert retrieve(store, message(content="橙鹿票据")).candidates[0].event.summary == "星舟网关连接超时"
 
 
 @pytest.mark.parametrize("invalid", ["evidence", "end", "created", "revision"])
@@ -295,7 +301,8 @@ def test_oversized_candidate_does_not_hide_a_smaller_candidate():
 def test_keyword_cap_is_explicit_and_does_not_claim_full_recall():
     result = retrieve(ObservedStore(event(1, 1)), message(content="橙鹿票据 星舟网关"),
                       HistoryRetrievalSettings(keyword_limit=1))
-    assert result.clues_limited and result.metadata()["incomplete"] and not result.candidates
+    assert result.clues_limited and not result.metadata()["incomplete"]
+    assert len(result.candidates) == 1
 
 
 def test_empty_history_with_many_keywords_is_complete_but_truncated_references_are_not():
@@ -316,7 +323,8 @@ def test_empty_history_with_many_keywords_is_complete_but_truncated_references_a
 def test_keyword_behavior_records_chinese_bigram_and_synonym_limits(old_text, new_text, hit):
     store = ObservedStore(event(1, 1, topic_key=old_text, summary=old_text))
     result = retrieve(store, message(content=new_text))
-    assert bool(result.candidates) is hit
+    assert len(result.candidates) == 1
+    assert any(reason.startswith("keyword:") for reason in result.candidates[0].hit_reasons) is hit
 
 
 def test_bot_only_batch_does_not_enter_retrieval_or_provider(tmp_path, monkeypatch):
@@ -339,7 +347,8 @@ def test_bot_only_batch_does_not_enter_retrieval_or_provider(tmp_path, monkeypat
 def test_repeated_context_late_and_changed_messages_keep_consumption_roles(tmp_path):
     old, recent = message("opening", 1), message("recent", 10)
     service, store, source, provider = build(tmp_path, [old, recent], {
-        old.message_id: Candidate("排障", "星舟网关/连接超时", "星舟网关连接超时", [old.key]),
+        old.message_id: Candidate("排障", "星舟网关/连接超时", "星舟网关连接超时", [old.key],
+            decision="new", decision_reason="虚构首次记录", basis=[dict(message_id=old.key, quote=old.content)]),
     })
     service.run_window(UID, window(1))
     service.run_window(UID, window(10))
@@ -374,6 +383,8 @@ def pure_xhub(settings):
 
 def test_model_input_keeps_old_candidates_and_contract_rejects_background_evidence(tmp_path):
     old = event(1, 1, closed_at=window(1).end)
+    old.evidence[0]["source"] = "official_chat"
+    old.updated_by[0]["snapshot"]["evidence"] = deepcopy(old.evidence)
     new = message(source="official_chat")
     result = retrieve(ObservedStore(old), new)
     provider = pure_xhub(Settings(uid=UID, data_dir=tmp_path))
@@ -381,7 +392,7 @@ def test_model_input_keeps_old_candidates_and_contract_rejects_background_eviden
     payload = provider._input([new], [], result.events)
     assert payload["existing_events"] == [result.candidates[0].to_input()]
     assert payload["history_retrieval"]["context_chars"] <= provider.settings.history_retrieval.max_chars
-    assert payload["existing_events"][0]["evidence_ids"] == [f"{SOURCE}:old-evidence-1"]
+    assert payload["existing_events"][0]["evidence_ids"] == ["official_chat:old-evidence-1"]
     assert "excerpt" not in json.dumps(payload, ensure_ascii=False)
     output = dict(schema_version="1.0", candidates=[dict(
         type="排障", topic_key=old.topic_key, summary="虚构新增进展", evidence_ids=[new.key],
@@ -395,7 +406,10 @@ def test_model_input_keeps_old_candidates_and_contract_rejects_background_eviden
 
 def test_model_input_rejects_cross_stream_or_stale_batch(tmp_path):
     new = message(source="official_chat")
-    result = retrieve(ObservedStore(event(1, 1)), new)
+    old = event(1, 1)
+    old.evidence[0]["source"] = "official_chat"
+    old.updated_by[0]["snapshot"]["evidence"] = deepcopy(old.evidence)
+    result = retrieve(ObservedStore(old), new)
     provider = pure_xhub(Settings(uid=UID, data_dir=tmp_path))
     with pytest.raises(XHubError):
         provider.configure_history_retrieval(replace(result, stream="another-analysis-stream"))

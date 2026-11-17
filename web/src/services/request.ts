@@ -29,7 +29,7 @@ export async function request<T>(
   }
   const headers = new Headers(options.headers);
   headers.set('Accept', 'application/json');
-  if (options.data !== undefined || options.method?.toUpperCase() === 'POST')
+  if (options.data !== undefined)
     headers.set('Content-Type', 'application/json');
   const timeout = AbortSignal.timeout(20000);
   const signal = options.signal

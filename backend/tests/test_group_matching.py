@@ -20,7 +20,7 @@ def setup(tmp_path, **overrides):
     old = message("opening", 1)
     service, store, provider, source = build(tmp_path, [old], {
         old.message_id: candidate(old, attributes={"资源标识": "bucket-A"}, changes=[change(old)])})
-    service.settings = replace(service.settings, group_matching_enabled=True, **overrides)
+    service.settings = replace(service.settings, **overrides)
     first = service.run_window(UID, window(1))
     return service, store, provider, source, old, first.created[0]
 
@@ -143,7 +143,7 @@ def test_no_new_fact_is_non_business_and_leaves_event_unchanged(tmp_path):
 def test_missing_group_is_review_without_model_call(tmp_path):
     msg = message("missing", 1, conversation_id="")
     service, store, provider, _ = build(tmp_path, [msg])
-    service.settings = replace(service.settings, group_matching_enabled=True)
+    service.settings = replace(service.settings)
     result = service.run_window(UID, window(1))
     assert result.review and result.processed == 1 and not provider.calls and not store.events
 
@@ -151,7 +151,7 @@ def test_missing_group_is_review_without_model_call(tmp_path):
 def test_later_group_error_rolls_back_prior_group_event_and_index(tmp_path):
     a, b = message("a", 1), message("b", 1, conversation_id="synthetic-other-group")
     service, store, provider, _ = build(tmp_path, [a, b], {"a": candidate(a), "b": candidate(b, "update", "invalid")})
-    service.settings = replace(service.settings, group_matching_enabled=True)
+    service.settings = replace(service.settings)
     with pytest.raises(ContractError):
         service.run_window(UID, window(1))
     assert not store.events and not store.processed and not store.group_links and not store.attributions
@@ -160,7 +160,7 @@ def test_later_group_error_rolls_back_prior_group_event_and_index(tmp_path):
 def test_large_group_is_split_without_dropping_new_messages(tmp_path):
     messages = [message(str(i), 1, f"虚构独立事项{i}：" + "合成描述" * 180) for i in range(3)]
     service, store, provider, _ = build(tmp_path, messages, {m.message_id: candidate(m) for m in messages})
-    service.settings = replace(service.settings, group_matching_enabled=True, group_batch_chars=1024)
+    service.settings = replace(service.settings, group_batch_chars=1024)
     result = service.run_window(UID, window(1))
     assert result.processed == 3 and len(provider.calls) == 3 and len(result.created) == 3
     assert [m.key for call in provider.calls for m in call[0]] == [m.key for m in messages]
@@ -171,7 +171,7 @@ def test_large_group_is_split_without_dropping_new_messages(tmp_path):
 def test_actual_provider_extracts_objects_and_attribution_in_one_call(tmp_path):
     msg = message("new", 1, "虚构报告上传 bucket-A 失败")
     service, store, _, source = build(tmp_path, [msg])
-    settings = replace(service.settings, provider="xhub", group_matching_enabled=True)
+    settings = replace(service.settings, provider="xhub")
     calls = []
     def respond(request):
         calls.append(json.loads(request.content))
@@ -228,10 +228,11 @@ def test_multiple_events_linked_to_one_message_do_not_become_unique_target(tmp_p
     assert result.review and not result.updated and not result.created
 
 
-def test_queued_mode_and_batch_budget_are_frozen(tmp_path):
+def test_queued_batch_budget_is_frozen(tmp_path):
     from contextlib import contextmanager
     from dake.jobs.runner import prepare_request, RunRunner
     from test_runs import MemoryRuns
+    from execution_fakes import MemoryAttempts, RecordingStore
     case = setup(tmp_path)
     settings = replace(case[0].settings, uid="1000000001", group_batch_chars=2048)
     request, total = prepare_request(settings, dict(start=window(2).start.isoformat(), end=window(2).end.isoformat(), interval="1d"))
@@ -241,22 +242,12 @@ def test_queued_mode_and_batch_budget_are_frozen(tmp_path):
     @contextmanager
     def factory(frozen, **_):
         seen.append(frozen)
-        yield IncrementalService(MemoryStore(), FakeSource([]), case[2], frozen)
-    runner = RunRunner(replace(settings, group_matching_enabled=False, group_batch_chars=8192), runs, service_factory=factory)
+        attempts = MemoryAttempts()
+        yield IncrementalService(RecordingStore(attempts), FakeSource([]), case[2], frozen, attempts=attempts)
+    runner = RunRunner(replace(settings, group_batch_chars=8192), runs, service_factory=factory)
     runner.execute(runs.claim_next(runner.runner_id))
-    assert seen[0].group_matching_enabled and seen[0].group_batch_chars == 2048
+    assert seen[0].group_batch_chars == 2048
     assert next(iter(runs.items.values()))["status"] == "succeeded"
-
-
-def test_legacy_request_shape_and_execution_policy_remain_compatible(tmp_path):
-    from dake.jobs.runner import prepare_request
-    from dake.services.executions import execution_policy
-    case = setup(tmp_path)
-    service = case[0]
-    service.settings = replace(service.settings, group_matching_enabled=False, uid="1000000001")
-    request, _ = prepare_request(service.settings, {})
-    assert not any(key.startswith("group_") for key in request)
-    assert not any(key.startswith("group_") for key in execution_policy(service))
 
 
 def test_new_with_correction_is_review_and_valid_matter_still_commits(tmp_path):
@@ -266,7 +257,7 @@ def test_new_with_correction_is_review_and_valid_matter_still_commits(tmp_path):
         a.message_id:candidate(a,changes=[change(a)]),
         b.message_id:candidate(b,changes=[change(b,kind='correction',replaces='虚构已恢复')]),
     })
-    service.settings=replace(service.settings,group_matching_enabled=True)
+    service.settings=replace(service.settings,)
     result=service.run_window(UID,window(1))
     assert len(result.created)==len(result.review)==1 and result.processed==2
     record=store.attributions[(b.key,service.stream)]['records'][0]
@@ -280,7 +271,7 @@ def test_initial_conflict_does_not_hide_fabricated_evidence(tmp_path):
     facts=[change(msg,kind='correction',replaces='虚构已恢复')]
     facts[0]['evidence'][0]['quote']='不在原文中的虚构引文'
     with pytest.raises(ContractError,match='直接证据'):
-        parse_attribution_output(model_output(msg,changes=facts),[msg],[],[],review_initial_conflicts=True)
+        parse_attribution_output(model_output(msg,changes=facts),[msg],[],[])
 
 
 def test_initial_conflict_parser_keeps_actual_model_suggestion(tmp_path):
@@ -289,11 +280,9 @@ def test_initial_conflict_parser_keeps_actual_model_suggestion(tmp_path):
     facts=[change(msg,kind='correction',replaces='虚构已恢复')]
     notes=[]
     parsed=parse_attribution_output(model_output(msg,changes=facts),[msg],[],[],
-        review_initial_conflicts=True,normalizations=notes)
+        normalizations=notes)
     assert parsed[0].decision=='new' and parsed[0].changes==facts
     assert notes[-1]['reason']=='initial_action_conflict_requires_review'
-    with pytest.raises(ContractError,match='新建只记录'):
-        parse_attribution_output(model_output(msg,changes=facts),[msg],[],[])
 
 
 def test_uncertain_recovery_action_only_blocks_conflicting_matter(tmp_path):
@@ -325,7 +314,7 @@ def test_continuity_action_conflict_never_hides_fabricated_direct_quote():
     assert not isinstance(error.value, ContinuityActionConflict)
 
 
-def test_parser_preserves_conflicting_suggestion_only_in_explicit_group_mode(tmp_path):
+def test_parser_preserves_conflicting_suggestion_for_program_review(tmp_path):
     from dake.analysis.attribution import parse_attribution_output
     from dake.analysis.continuity import ContinuityActionConflict
     case = setup(tmp_path)
@@ -335,10 +324,8 @@ def test_parser_preserves_conflicting_suggestion_only_in_explicit_group_mode(tmp
         basis=[dict(message_id=m.key, quote=m.content) for m in (msg, old)],
         continuity=dict(kind='uncertain', previous_event_id=event_id,
             evidence=[dict(message_id=msg.key, quote=msg.content)]))
-    with pytest.raises(ContinuityActionConflict):
-        parse_attribution_output(raw, [msg], [old], [case[1].events[event_id]])
     notes = []
     parsed = parse_attribution_output(raw, [msg], [old], [case[1].events[event_id]],
-        review_continuity_conflicts=True, normalizations=notes)
+        normalizations=notes)
     assert parsed[0].decision == 'update' and parsed[0].continuity['previous_event_id'] == event_id
     assert notes[-1]['reason'] == 'continuity_action_conflict_requires_review'

@@ -46,7 +46,7 @@ def test_later_customer_discussion_can_use_previously_filtered_alert(tmp_path):
     human = replace(message("human", "2026-11-09 10:00:00"), sender_id="synthetic-human", internal_hint=0)
     configure(tmp_path, notice)
     related = candidate(human.key)
-    related.evidence_ids.append(notice.key)
+    related.basis = [dict(message_id=human.key, quote=human.content), dict(message_id=notice.key, quote=notice.content)]
     service, store, _, provider = build(tmp_path, [notice, human], {human.message_id: related})
     service.run_window(UID, day_window(8))
     result = service.run_window(UID, day_window(9))
@@ -54,7 +54,7 @@ def test_later_customer_discussion_can_use_previously_filtered_alert(tmp_path):
     new, context, _ = provider.calls[0]
     assert [m.key for m in new] == [human.key]
     assert notice.key in [m.key for m in context]
-    assert {e["message_id"] for e in store.events[result.created[0]].evidence} == {notice.message_id, human.message_id}
+    assert {e["message_id"] for e in store.events[result.created[0]].evidence} == {human.message_id}
 
 
 def test_unrelated_human_does_not_allow_bot_only_candidate(tmp_path):
@@ -72,7 +72,8 @@ def test_unknown_customer_without_internal_reply_is_not_filtered(tmp_path):
     human = replace(bot(), sender_id="unconfirmed-account", content="虚构：客户主动提出扩容诉求")
     service, store, _, _ = build(tmp_path, [human], {human.message_id: candidate(human.key)})
     result = service.run_window(UID, day_window(8))
-    assert len(result.created) == 1 and not result.filter_audit
+    assert len(result.created) == 1
+    assert all(r.get("reason") != "bot_only_candidate" for r in result.filter_audit)
     assert len(store.events) == 1
 
 

@@ -106,7 +106,7 @@ class HistoryRetrievalResult:
     def metadata(self):
         """限制元数据不包含消息正文、检索词或外部凭据。"""
         return dict(version=RETRIEVAL_VERSION, mode="forward_only", before=self.before.isoformat(),
-                    scope="conversation" if self.conversation else "customer",
+                    scope="conversation",
                     conversation_id=self.conversation[1] if self.conversation else None,
                     index_incomplete=self.index_incomplete,
                     exact_limited=self.exact_limited,
@@ -117,7 +117,7 @@ class HistoryRetrievalResult:
                     reference_limited=self.reference_limited,
                     incomplete=bool(self.exact_limited or self.index_incomplete or self.scan_limited
                                     or self.reference_limited
-                                    or (self.clues_limited and self.conversation is None and self.scanned > 0) or self.context_limited
+                                    or self.context_limited
                                     or self.unsafe_skipped or self.snapshot_unavailable
                                     or any(c.evidence_limited for c in self.candidates)))
 
@@ -135,14 +135,14 @@ class HistoryRetriever:
         if any(message.uid != uid or message.sent_at >= before for message in messages):
             raise ValueError("历史检索输入超出客户或时间范围")
         result = HistoryRetrievalResult(uid, stream, before, tuple((m.key, m.digest) for m in messages))
-        result.conversation = conversation
-        if conversation is not None:
-            if not all((m.source, m.conversation_id) == conversation for m in messages) or not all(conversation):
-                raise ValueError("同群检索输入必须属于同一来源和稳定群 ID")
-            result.index_incomplete = self.store.group_index_incomplete(uid, stream)
-        scope = dict(conversation=conversation) if conversation else {}
         if not messages:
             return result
+        conversation = conversation or (messages[0].source, messages[0].conversation_id)
+        if not all(conversation) or any((m.source, m.conversation_id) != conversation for m in messages):
+            raise ValueError("同群检索输入必须属于同一来源和稳定群 ID")
+        result.conversation = conversation
+        result.index_incomplete = self.store.group_index_incomplete(uid, stream)
+        scope = dict(conversation=conversation)
         event_refs, message_refs, keywords, result.clues_limited, result.reference_limited = _clues(messages, self.limits)
         recent_start = before - timedelta(days=self.limits.recent_days)
         matches, seen = [], set()
@@ -164,7 +164,7 @@ class HistoryRetriever:
                 else:
                     result.unsafe_skipped += 1
             snapshots = self.store.history_event_snapshots(uid, stream, safe) if safe else []
-            group_keys = self.store.group_evidence_keys(uid, stream, [e.event_id for e in snapshots], conversation) if conversation else None
+            group_keys = self.store.group_evidence_keys(uid, stream, [e.event_id for e in snapshots], conversation)
             result.snapshot_unavailable += len(safe) - len(snapshots)
             by_id = {head["event_id"]: head for head in safe}
             for event in snapshots:
@@ -184,18 +184,17 @@ class HistoryRetriever:
                 if not valid:
                     result.unsafe_skipped += 1
                     continue
-                if group_keys is not None:
-                    event.evidence = [ref for ref in event.evidence if
-                        (ref["source"], ref["message_id"], ref.get("digest") or "") in group_keys.get(event.event_id, set())]
-                    if not event.evidence or any(ref.get("conversation_id") not in (None, "", conversation[1]) for ref in event.evidence):
-                        result.unsafe_skipped += 1
-                        continue
-                    for ref in event.evidence:
-                        ref["conversation_id"] = conversation[1]
-                    keys = {(ref["source"], ref["message_id"], ref.get("digest")) for ref in event.evidence}
-                    if event.recovery and not all((ref["source"], ref["message_id"], ref.get("digest")) in keys
-                                                  for ref in event.recovery["evidence"]):
-                        event.recovery = None
+                event.evidence = [ref for ref in event.evidence if
+                    (ref["source"], ref["message_id"], ref.get("digest") or "") in group_keys.get(event.event_id, set())]
+                if not event.evidence or any(ref.get("conversation_id") not in (None, "", conversation[1]) for ref in event.evidence):
+                    result.unsafe_skipped += 1
+                    continue
+                for ref in event.evidence:
+                    ref["conversation_id"] = conversation[1]
+                keys = {(ref["source"], ref["message_id"], ref.get("digest")) for ref in event.evidence}
+                if event.recovery and not all((ref["source"], ref["message_id"], ref.get("digest")) in keys
+                                              for ref in event.recovery["evidence"]):
+                    event.recovery = None
                 evidence_ids = list(dict.fromkeys(f"{item['source']}:{item['message_id']}" for item in event.evidence))
                 facts = " ".join(f"{key} {value}" for key, value in event.attributes.items() if isinstance(value, str))
                 text = f"{event.topic_key or ''} {event.summary} {facts}".casefold()
@@ -203,8 +202,6 @@ class HistoryRetriever:
                 exact_event = event.event_id in event_refs
                 exact_message = any(key in evidence_ids for key in message_refs)
                 # 本群模式保留预算内的语义候选，不能让“仍然慢”等短指代被词法零命中挡掉。
-                if not (exact_event or exact_message or hits) and conversation is None:
-                    continue
                 reasons = (["exact_event_id"] if exact_event else []) + (["exact_message_key"] if exact_message else [])
                 reasons += ["keyword:" + word for word in hits]
                 if not (exact_event or exact_message or hits):
@@ -214,7 +211,7 @@ class HistoryRetriever:
                 rank = (-int(exact_event), -int(exact_message), event.end_time < recent_start,
                         -len(hits), event.closed_at is not None, -event.end_time.timestamp(), event.event_id)
                 event = deepcopy(event)
-                event.attributes = {key: value for key, value in event.attributes.items() if key in MATCH_FIELDS} if conversation else {}
+                event.attributes = {key: value for key, value in event.attributes.items() if key in MATCH_FIELDS}
                 event.extensions, event.updated_by = {}, []
                 # 显式命中的引用优先保留；同消息的多个版本仅输出一次引用。
                 recovery_refs = (event.recovery or {}).get("evidence", [])
@@ -242,7 +239,7 @@ class HistoryRetriever:
         if event_refs:
             consume(self.store.history_event_heads(uid, stream, before, limit=self.limits.exact_limit,
                                                    event_ids=event_refs, **scope))
-        if conversation and message_refs:
+        if message_refs:
             exact = self.store.history_event_heads(uid, stream, before, limit=self.limits.exact_limit + 1,
                                                    message_keys=message_refs, **scope)
             result.exact_limited = len(exact) > self.limits.exact_limit

@@ -6,11 +6,9 @@ import * as system from "./system";
 import * as config from "./config";
 import * as events from "./events";
 import * as runs from "./runs";
-import * as schedules from "./schedules";
 export default {
   system,
   config,
   events,
   runs,
-  schedules,
 };

@@ -26,15 +26,13 @@ def message_ref(message):
 def execution_policy(service):
     """只冻结已有处理参数，不改变策略、分析范围或既有规则。"""
     settings = service.settings
-    policy = dict(provider=service.stream, attribution=attribution_version(),
+    return dict(provider=service.stream, attribution=attribution_version(),
         start=settings.start.isoformat(), history_retrieval=asdict(settings.history_retrieval),
         history_context=asdict(settings.history_context), context_lookback=str(settings.context_lookback),
         ingest_lookback=str(settings.ingest_lookback), match_window=str(settings.match_window),
         closed_grace=str(settings.closed_grace), closed_statuses=list(settings.closed_statuses),
-        default_status=settings.default_status, default_severity=settings.default_severity)
-    if settings.group_matching_enabled:
-        policy.update(group_matching=group_matching_version(), group_batch_chars=settings.group_batch_chars)
-    return policy
+        default_status=settings.default_status, default_severity=settings.default_severity,
+        group_matching=group_matching_version(), group_batch_chars=settings.group_batch_chars)
 
 
 def receipt_for(result, events, completed, *, kind="analysis", parent=None, source_receipt=None):

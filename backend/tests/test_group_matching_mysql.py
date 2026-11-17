@@ -16,13 +16,8 @@ pytestmark = pytest.mark.isolated_mysql
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def grouped(case):
-    settings = replace(case.settings, group_matching_enabled=True)
-    return case.fresh(settings)
-
-
 def test_group_index_and_exact_message_lookup_are_scoped(case):
-    service = grouped(case)
+    service = case.service
     first = service.run_window(case.uid, window(1))
     old_id = first.created[0]
     other = replace(message("synthetic-other", 2, conversation_id="synthetic-other-room"), uid=case.uid)
@@ -42,7 +37,7 @@ def test_group_index_and_exact_message_lookup_are_scoped(case):
 
 
 def test_same_group_updates_and_related_receipt_restores_without_model(case, monkeypatch):
-    service = grouped(case)
+    service = case.service
     event_id = service.run_window(case.uid, window(1)).created[0]
     follow = replace(message("synthetic-follow", 2, "虚构报告上传故障鉴权原因已定位"), uid=case.uid)
     case.source.messages.append(follow)
@@ -57,11 +52,10 @@ def test_same_group_updates_and_related_receipt_restores_without_model(case, mon
     result = service.run_window(case.uid, window(2), execution={"retry_of": parent["attempt_id"]})
     assert result.updated == [event_id] and len(case.provider.calls) == 2
     assert result.event_count == 1 and result.recovered_from_attempt_id == parent["attempt_id"]
-    assert service.store.event_revision_counts(case.uid, service.stream) == {event_id: 2}
 
 
 def test_index_failure_rolls_back_events_marks_and_links(case, monkeypatch):
-    service = grouped(case)
+    service = case.service
     def fail(*_):
         raise StorageError("合成索引失败")
     monkeypatch.setattr(service.store, "index_event_groups", fail)
@@ -92,14 +86,14 @@ def test_migration_backfill_uses_only_same_digest_messages(case, changed):
 
 
 def test_future_window_guard_uses_metadata(case):
-    service = grouped(case)
+    service = case.service
     service.run_window(case.uid, window(1))
     assert service.store.has_future_event_revision(case.uid, service.stream, window(1).start)
     assert not service.store.has_future_event_revision(case.uid, service.stream, window(1).end)
 
 
 def test_multiple_groups_have_distinct_proposal_ids_in_one_receipt(case):
-    service = grouped(case)
+    service = case.service
     other = replace(message("synthetic-same-window", 1, conversation_id="synthetic-other-room"), uid=case.uid)
     case.source.messages.append(other)
     case.provider.mapping[other.message_id] = candidate(other, changes=[change(other)])
@@ -112,7 +106,7 @@ def test_multiple_groups_have_distinct_proposal_ids_in_one_receipt(case):
 
 
 def test_initial_action_conflict_commits_valid_matter_and_review_together(case):
-    service=grouped(case)
+    service=case.service
     ambiguous=replace(message('synthetic-initial-conflict',1,'虚构问题实际一直存在'),uid=case.uid)
     case.source.messages.append(ambiguous)
     case.provider.mapping[ambiguous.message_id]=candidate(ambiguous,

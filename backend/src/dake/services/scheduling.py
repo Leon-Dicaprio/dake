@@ -3,15 +3,12 @@
 from dataclasses import replace
 from datetime import datetime, timedelta
 
-from ..config import bound
-from ..analysis.providers.xhub import configured_stream
+from ..config import bound, SCHEDULE_INTERVAL, SCHEDULE_RETRY_DELAYS
+from ..analysis.group_matching import group_matching_version
 from ..domain.models import TZ, parse_time
-from ..jobs.runner import prepare_request
+from ..jobs.runner import prepare_request, restore_settings
 from ..repositories.schedules import ScheduleRepository
 from .scheduled_customers import FileCustomerSource
-
-
-RETRY_DELAYS = (60, 300, 900)
 
 
 def window_end(start, now, interval):
@@ -20,7 +17,7 @@ def window_end(start, now, interval):
     return end if end <= now else None
 
 
-def completion(schedule, run, attempt, now, retry_delays=RETRY_DELAYS):
+def completion(schedule, run, attempt, now, retry_delays=SCHEDULE_RETRY_DELAYS):
     """纯状态转换便于故障注入；收据不明绝不自动重跑，业务待确认不算失败。"""
     if run["status"] in {"queued", "running"}:
         return {}
@@ -56,16 +53,12 @@ def completion(schedule, run, attempt, now, retry_delays=RETRY_DELAYS):
 
 
 class SchedulingService:
-    """名单适配器可以注入；网页、命令行和内置触发器共用相同编排入口。"""
+    """名单适配器可以注入；API、命令行和内置触发器共用相同编排入口。"""
 
-    def __init__(self, settings, *, repository=None, customer_source=None, retry_delays=None, clock=None, service_factory=None):
-        retry_delays = settings.schedule_retry_delays if retry_delays is None else retry_delays
-        if len(retry_delays) != 3 or any(type(v) is not int or not 1 <= v <= 86400 for v in retry_delays):
-            raise ValueError("重试须为三个 1 至 86400 秒的整数间隔")
+    def __init__(self, settings, *, repository=None, customer_source=None, clock=None, service_factory=None):
         self.settings = settings
         self.repository = repository or ScheduleRepository(settings)
         self.customer_source = customer_source or FileCustomerSource(settings.data_dir)
-        self.retry_delays = retry_delays
         self.clock = clock or (lambda: datetime.now(TZ))
         self.service_factory = service_factory
 
@@ -78,12 +71,12 @@ class SchedulingService:
             customers = self.customer_source.load()
         except (OSError, ValueError, TypeError):
             raise ValueError("客户名单尚未就绪或不完整，请先对接名单再开始定时处理") from None
-        interval = timedelta(minutes=15)
+        interval = SCHEDULE_INTERVAL
         frozen = replace(self.settings, start=start, end=start + interval, interval=interval)
         template, _ = prepare_request(frozen, dict(start=start.isoformat(), end=(start + interval).isoformat(),
                                                  offline=False))
         template.pop("uid")
-        template.update(business_start=start.isoformat(), schedule_retry_delays=list(self.retry_delays))
+        template.update(business_start=start.isoformat(), schedule_retry_delays=list(self.settings.schedule_retry_delays))
         with self.repository.orchestration() as acquired:
             if not acquired:
                 raise ValueError("调度正在同步，请稍后重试")
@@ -127,10 +120,13 @@ class SchedulingService:
                     continue
                 if customers is None or not schedule["enabled"] or schedule["status"] != "active":
                     continue
+                if schedule["template"].get("group_matching_version") != group_matching_version():
+                    self.repository.update(schedule["schedule_id"], status="paused", error="处理策略已变化，请迁移调度配置后再恢复")
+                    continue
                 if schedule["retry_at"] and parse_time(schedule["retry_at"]) > now:
                     continue
                 start = parse_time(schedule["next_start"])
-                end = window_end(start, now, timedelta(minutes=15))
+                end = window_end(start, now, SCHEDULE_INTERVAL)
                 if end is None:
                     continue
                 request = dict(schedule["template"], uid=schedule["uid"], start=start.isoformat(), end=end.isoformat(),
@@ -146,7 +142,7 @@ class SchedulingService:
         items = [{k: v for k, v in row.items() if k not in {"template", "retry_attempt_id"}} for row in rows]
         now = self.clock()
         for item in items:
-            item["pending_windows"] = max(0, int((now - parse_time(item["next_start"])).total_seconds()) // 900)
+            item["pending_windows"] = max(0, (now - parse_time(item["next_start"])) // SCHEDULE_INTERVAL)
             item["phase"] = ("disabled" if not item["enabled"] else item["status"] if item["status"] != "active" else
                              "queued" if item["active_run_id"] else "retry_wait" if item["retry_at"] else
                              "catching_up" if item["pending_windows"] else "waiting")
@@ -166,16 +162,16 @@ class SchedulingService:
             if action == "pause":
                 self.repository.update(schedule_id, status="paused", error="已手动暂停")
             elif action == "resume":
+                if row["template"].get("group_matching_version") != group_matching_version():
+                    raise ValueError("处理策略已变化，请先迁移调度配置")
                 if row["status"] == "needs_verification":
                     if not row["retry_attempt_id"]:
                         raise ValueError("执行记录缺失，不能自动解除核实状态")
                     from ..bootstrap import build_service
                     from .executions import verify_attempt
-                    request = row["template"]
-                    settings = replace(self.settings, uid=row["uid"], start=parse_time(row["business_start"]),
-                                       end=parse_time(row["next_start"]) + timedelta(minutes=15))
-                    if request["analysis_stream"] != configured_stream(settings):
-                        raise ValueError("当前分析配置与原执行不同，不能自动恢复")
+                    request = dict(row["template"], uid=row["uid"], schedule_id=schedule_id,
+                        start=row["next_start"], end=(parse_time(row["next_start"]) + SCHEDULE_INTERVAL).isoformat())
+                    settings = restore_settings(self.settings, request)
                     with (self.service_factory or build_service)(settings, offline=False) as service:
                         verify_attempt(service, row["uid"], row["retry_attempt_id"])
                 self.repository.update(schedule_id, status="active", retry_count=0, retry_at=None, error=None)

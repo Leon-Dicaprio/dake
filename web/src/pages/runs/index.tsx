@@ -9,7 +9,6 @@ import { api } from '@/services/api';
 import { CyclePanel } from './CyclePanel';
 import { currentRun, runStatuses as statuses } from './progress';
 import { RunDialog } from './RunDialog';
-import { RunTrace } from './RunTrace';
 
 /** 列表与选中任务都从服务端恢复，关闭或刷新页面不会丢失执行进度。 */
 export default function RunsPage() {
@@ -76,23 +75,6 @@ export default function RunsPage() {
   }
   const StatusIcon = currentStatus?.icon || FileClock;
   const eventUrl = `/events?${new URLSearchParams({ uid, stream })}`;
-  const traceWindowIndex =
-    run &&
-    (run.status === 'running' || run.status === 'failed') &&
-    !params.has('cycle')
-      ? Math.min(run.completed_windows, run.total_windows - 1)
-      : cycleIndex;
-  const canContinue = latest?.status === 'succeeded';
-  const nextStart = canContinue ? latest.request.end : workspace.data?.start;
-  const nextInterval = (
-    latest?.request.interval ||
-    workspace.data?.interval ||
-    '15m'
-  ).match(/^(\d+)(s|m|h|d)$/);
-  const nextMillis = nextInterval
-    ? Number(nextInterval[1]) *
-      ({ s: 1000, m: 60000, h: 3600000, d: 86400000 }[nextInterval[2]] || 60000)
-    : 900000;
   return (
     <main className="page runs-page">
       <header className="page-header">
@@ -102,17 +84,6 @@ export default function RunsPage() {
           <p>每 4 秒自动读取进度。失败会保留原因和已完成结果。</p>
         </div>
         <div className="page-header-actions">
-          <Button
-            variant="primary"
-            disabled={
-              !workspace.data ||
-              latest?.status === 'running' ||
-              latest?.status === 'queued'
-            }
-            onClick={() => update({ new: 'official' })}
-          >
-            处理新时段
-          </Button>
           <Button asChild>
             <Link to={eventUrl}>
               <ArrowUpRight size={16} />
@@ -329,11 +300,7 @@ export default function RunsPage() {
               <p className="run-count-note">
                 计数来自本任务已保存的逐轮结果，不是客户累计总数；缺失记录不会补算。
               </p>
-              <details
-                open
-                className="run-cycles"
-                key={`${uid}:${stream}:${runId}`}
-              >
+              <details className="run-cycles" key={`${uid}:${stream}:${runId}`}>
                 <summary>
                   展开已完成时段与事件变化（{cycles.length} 轮）
                 </summary>
@@ -343,13 +310,6 @@ export default function RunsPage() {
                   onSelect={(index) => update({ cycle: String(index) })}
                 />
               </details>
-              <RunTrace
-                key={`${uid}:${stream}:${runId}:${traceWindowIndex}`}
-                run={run}
-                uid={uid}
-                stream={stream}
-                windowIndex={traceWindowIndex}
-              />
               {run && (
                 <div className="run-footnote">
                   {run.started_at ? '开始于' : '任务创建于'}{' '}
@@ -371,28 +331,10 @@ export default function RunsPage() {
       </div>
       {creating && workspace.data && (
         <RunDialog
-          config={
-            canContinue && nextStart
-              ? {
-                  ...workspace.data,
-                  uid,
-                  start: nextStart,
-                  end: new Date(
-                    Date.parse(nextStart) + nextMillis,
-                  ).toISOString(),
-                  interval: latest.request.interval,
-                }
-              : { ...workspace.data, uid }
-          }
+          config={workspace.data}
           onClose={() => update({ new: '' })}
           onCreated={(created) => {
-            update({
-              new: '',
-              run: created.run_id,
-              uid: created.uid,
-              stream: created.request.analysis_stream || stream,
-              cycle: '',
-            });
+            update({ new: '', run: created.run_id, cycle: '' });
             runs.refresh();
             workspace.refresh();
           }}

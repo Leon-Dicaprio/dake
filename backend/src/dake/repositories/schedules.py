@@ -1,11 +1,12 @@
 """定时状态与队列关联持久化；提交任务和绑定进度使用同一数据库事务。"""
 
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime
 import hashlib
 import json
 from uuid import uuid4
 
+from ..config import SCHEDULE_INTERVAL
 from ..domain.models import TZ
 from .runs import RunConflict, RunRepository, _encoded
 
@@ -89,7 +90,7 @@ class ScheduleRepository(RunRepository):
             else:
                 rows, _ = store._execute("SELECT * FROM processing_schedules WHERE active_run_id IS NOT NULL OR "
                     "(enabled=TRUE AND status='active' AND (retry_at IS NULL OR retry_at<=%s) AND next_start<=%s) "
-                    "ORDER BY last_turn,schedule_id LIMIT 128", (ready_at.isoformat(), (ready_at - timedelta(minutes=15)).isoformat()))
+                    "ORDER BY last_turn,schedule_id LIMIT 128", (ready_at.isoformat(), (ready_at - SCHEDULE_INTERVAL).isoformat()))
         return [self.row(row) for row in rows]
 
     def get_schedule(self, schedule_id):

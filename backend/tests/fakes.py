@@ -107,9 +107,6 @@ class MemoryStore:
     def events_by_ids(self, uid, stream, event_ids):
         return [deepcopy(e) for e in self.events.values() if e.event_id in event_ids and (e.uid, e.stream) == (uid, stream)]
 
-    def event_revision_counts(self, uid, stream):
-        return {e.event_id: len(e.updated_by) for e in self.events.values() if (e.uid, e.stream) == (uid, stream)}
-
     def has_future_event_revision(self, uid, stream, before):
         from dake.domain.models import parse_time
         return any(parse_time(r["window_end"]) > before for e in self.events.values()
@@ -202,5 +199,7 @@ class FakeProvider:
         candidates = []
         for message in new_messages:
             selected = self.mapping.get(message.message_id, [])
+            if callable(selected):
+                selected = selected(new_messages, context, existing_events)
             candidates.extend(deepcopy(selected if isinstance(selected, list) else [selected]))
         return candidates

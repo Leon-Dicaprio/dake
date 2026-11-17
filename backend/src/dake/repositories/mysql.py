@@ -363,12 +363,6 @@ class MySQLStore:
             ",".join(["%s"] * len(event_ids)) + ") ORDER BY start_time,event_id", (uid, stream, *event_ids))
         return [Event.from_dict(_decoded(row["payload"])) for row in rows]
 
-    def event_revision_counts(self, uid, stream):
-        """任务基线只读取修订计数，不复制事件正文及全部历史快照。"""
-        rows, _ = self._execute("SELECT event_id,JSON_LENGTH(payload,'$.updated_by') AS count "
-                                "FROM events WHERE uid=%s AND stream=%s", (uid, stream))
-        return {row["event_id"]: row["count"] or 0 for row in rows}
-
     def has_future_event_revision(self, uid, stream, before):
         """只读修订时间元数据，保留禁止向已推进分析流倒灌旧窗口的检查。"""
         rows, _ = self._execute("SELECT JSON_EXTRACT(payload,'$.updated_by[*].window_end') AS ends "
@@ -502,13 +496,7 @@ class MySQLStore:
                    review_flag,payload,event_id) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 values,
             )
-        # 迁移后所有写入入口都维护索引，包括仍按旧策略执行的已排队任务。
-        if getattr(self, "_group_index_available", None) is None:
-            tables, _ = self._execute("SELECT 1 FROM information_schema.tables "
-                "WHERE table_schema=DATABASE() AND table_name='event_group_links'")
-            self._group_index_available = bool(tables)
-        if self._group_index_available:
-            self.index_event_groups(event)
+        self.index_event_groups(event)
 
     def close(self) -> None:
         """释放本实例的数据库连接，可重复调用。"""

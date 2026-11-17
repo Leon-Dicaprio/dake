@@ -21,11 +21,8 @@ class ReplayService:
         for index, window in enumerate(windows(start, end, interval)):
             if index < start_index:
                 continue
-            if getattr(self.service, "attempts", None) is None:
-                yield self.service.run_window(uid, window)
-            else:
-                yield self.service.run_window(uid, window, execution=dict(run_id=run_id, window_index=index,
-                    retry_of=(retry_attempts or {}).get(index)))
+            yield self.service.run_window(uid, window, execution=dict(run_id=run_id, window_index=index,
+                retry_of=(retry_attempts or {}).get(index)))
 
     def next_window(self, uid: str, start: datetime, end: datetime,
                     interval: timedelta, *, resume: bool = True) -> Window | None:

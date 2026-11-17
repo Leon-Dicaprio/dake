@@ -90,7 +90,7 @@ def test_old_queued_task_does_not_silently_switch_from_stub_to_model(tmp_path):
         request.pop(key)
     runner.settings = replace(settings, provider="xhub")
     run = execute_next(repository, runner, request, total)
-    assert run["status"] == "succeeded" and seen[-1].provider == "stub"
+    assert run["status"] == "failed" and not seen
 
 
 @pytest.mark.parametrize("corrected", [True, False])
@@ -128,49 +128,3 @@ def test_full_evidence_content_only_uses_matching_message_revision():
     revised = replace(msg, content="后来修改的另一段合成原文")
     older = enrich_evidence(evidence, {(msg.source, msg.message_id): revised.to_dict()})
     assert older["content"] is None and older["excerpt"] == evidence["excerpt"]
-
-
-@pytest.mark.parametrize('failure',['tcp','tls','read','exhausted'])
-def test_only_pre_request_connections_retry_without_repeating_model_post(tmp_path,monkeypatch,failure):
-    """真实 HTTP 传输配合离线网络流，区分建连失败与请求发出后的读取超时。"""
-    import httpcore
-    from httpcore._backends.mock import MockStream
-    from httpcore._backends.sync import SyncBackend
-    from dake.analysis.providers.xhub import XHubTransientError
-    for key in ('HTTPS_PROXY','https_proxy','ALL_PROXY','all_proxy'):
-        monkeypatch.delenv(key,raising=False)
-    msg=message()
-    settings=replace(Settings(),provider='xhub',uid=msg.uid,data_dir=tmp_path)
-    content=json.dumps({'choices':[{'finish_reason':'stop','message':{'content':output(candidate(evidence_ids=[msg.key]))}}]}).encode()
-    wire=b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: '+str(len(content)).encode()+b'\r\n\r\n'+content
-    attempts=[];writes=[]
-    class Stream(MockStream):
-        def start_tls(self,ssl_context,server_hostname=None,timeout=None):
-            assert ssl_context.verify_mode != 0 and ssl_context.check_hostname
-            assert server_hostname=='llmapi.qiniu.io'
-            if failure=='tls' and len(attempts)<3:
-                raise httpcore.ConnectTimeout('synthetic TLS connection failure')
-            return self
-        def write(self,buffer,timeout=None):
-            writes.append(buffer)
-        def read(self,max_bytes,timeout=None):
-            if failure=='read':
-                raise httpcore.ReadTimeout('synthetic response timeout')
-            return super().read(max_bytes,timeout)
-    def connect(self,**kwargs):
-        attempts.append(kwargs)
-        if failure=='exhausted' or (failure=='tcp' and len(attempts)<3):
-            raise httpcore.ConnectTimeout('synthetic TCP connection failure')
-        return Stream([wire])
-    monkeypatch.setattr(SyncBackend,'connect_tcp',connect)
-    monkeypatch.setattr(SyncBackend,'sleep',lambda *args:None)
-    client=XHubProvider(XHubConfig(settings.llm_model,'synthetic-key'),settings)
-    try:
-        if failure in {'read','exhausted'}:
-            with pytest.raises(XHubTransientError):client.extract([msg],[],[])
-        else:
-            assert len(client.extract([msg],[],[]))==1
-        assert len(attempts)==(1 if failure=='read' else 3)
-        assert sum(chunk.startswith(b'POST ') for chunk in writes)==(0 if failure=='exhausted' else 1)
-        assert len(client.traces)==1
-    finally:client.close()

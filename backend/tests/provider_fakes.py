@@ -8,7 +8,7 @@ UID = "synthetic-contract-customer"
 
 def message(identifier="m1", time="2026-11-08T09:00:00+08:00", text="合成空间 a 下载失败。"):
     return Message(uid=UID, source="official_chat", message_id=identifier,
-                   sent_at=parse_time(time), content=text, sender_id="synthetic-support")
+                   sent_at=parse_time(time), content=text, sender_id="synthetic-support", conversation_id="synthetic-contract-room")
 
 
 def candidate(**changes):

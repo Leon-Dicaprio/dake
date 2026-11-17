@@ -2,6 +2,7 @@
 
 from contextlib import contextmanager
 from dataclasses import replace
+import json
 from datetime import timedelta
 from types import SimpleNamespace
 from uuid import uuid4
@@ -88,9 +89,10 @@ def test_late_and_edited_message_before_task_start_is_processed_once(scheduled):
     env = scheduled
     env.service.tick(env.clock[0]); env.run_one(); env.run_one(); env.service.tick(env.clock[0])
     uid = env.customers[0].uid
-    msg = Message(uid, "synthetic-late", parse_time("2038-06-01T00:10:00"), "虚构事项需要排查")
+    msg = Message(uid, "synthetic-late", parse_time("2038-06-01T00:10:00"), "虚构事项需要排查", conversation_id="synthetic-schedule-room")
     env.messages.messages.append(msg)
-    env.provider.mapping[msg.message_id] = Candidate("排障", "synthetic-late", "虚构排查事项", [msg.message_id])
+    from test_attribution import candidate
+    env.provider.mapping[msg.message_id] = candidate(msg)
     env.service.tick(env.clock[0])
     results = [env.run_one(), env.run_one()]
     late = next(r for r in results if r["uid"] == uid)
@@ -99,6 +101,8 @@ def test_late_and_edited_message_before_task_start_is_processed_once(scheduled):
     repeat = [env.run_one(), env.run_one()]
     assert all(r["cycles"][0]["processed"] == 0 for r in repeat)
     env.messages.messages[0] = replace(msg, content="虚构事项补充新的排查信息")
+    env.provider.mapping[msg.message_id] = candidate(env.messages.messages[0], "review",
+        topic_key=None, decision_reason="虚构修订需核对，先保留原事件")
     env.service.tick(env.clock[0]); env.service.tick(env.clock[0])
     edited = [env.run_one(), env.run_one()]
     assert next(r for r in edited if r["uid"] == uid)["cycles"][0]["processed"] == 1
@@ -168,9 +172,10 @@ def test_queue_binding_is_atomic_when_schedule_update_fails(scheduled, monkeypat
 
 def test_committed_progress_failure_restores_without_calling_provider_again(scheduled, monkeypatch):
     env = scheduled
-    msg = Message(env.customers[0].uid, "synthetic-committed", parse_time("2038-06-01T00:01:00"), "虚构需排查事项")
+    msg = Message(env.customers[0].uid, "synthetic-committed", parse_time("2038-06-01T00:01:00"), "虚构需排查事项", conversation_id="synthetic-schedule-room")
     env.messages.messages.append(msg)
-    env.provider.mapping[msg.message_id] = Candidate("排障", "synthetic-committed", "虚构需排查事项", [msg.message_id])
+    from test_attribution import candidate
+    env.provider.mapping[msg.message_id] = candidate(msg)
     original = env.repository.complete_window
     def fail(run_id, runner_id, cycle):
         if cycle["uid"] == msg.uid:
@@ -180,7 +185,7 @@ def test_committed_progress_failure_restores_without_calling_provider_again(sche
     env.service.tick(env.clock[0]); env.run_one(); env.run_one(); env.service.tick(env.clock[0])
     row = next(r for r in env.repository.schedules() if r["uid"] == msg.uid)
     calls = len(env.provider.calls)
-    assert row["retry_attempt_id"] and row["retry_at"]
+    assert row["retry_attempt_id"] and row["retry_at"] and calls == 1
     monkeypatch.setattr(env.repository, "complete_window", original)
     env.clock[0] = parse_time(row["retry_at"])
     env.service.tick(env.clock[0])
@@ -263,3 +268,20 @@ def test_unknown_commit_blocks_until_explicit_verification_then_restores_only(sc
     env.service.tick(env.clock[0])
     restored = env.repository.get_schedule(row["schedule_id"])
     assert restored["next_start"] == "2038-06-01T00:15:00+08:00"
+
+
+@pytest.mark.parametrize("version", [None, "conversation-matching-v2-old"])
+def test_old_schedule_template_cannot_enqueue_or_resume(scheduled, version):
+    env = scheduled
+    row = env.repository.schedules()[0]
+    template = dict(row["template"])
+    template["group_matching_version"] = version
+    with env.repository.connection() as store:
+        store._execute("UPDATE processing_schedules SET template=%s WHERE schedule_id=%s",
+                       (json.dumps(template), row["schedule_id"]))
+    env.service.tick(env.clock[0])
+    saved = env.repository.get_schedule(row["schedule_id"])
+    assert saved["status"] == "paused" and saved["active_run_id"] is None
+    assert saved["next_start"] == row["next_start"]
+    with pytest.raises(ValueError, match="迁移调度配置"):
+        env.service.control_customer(row["schedule_id"], "resume")

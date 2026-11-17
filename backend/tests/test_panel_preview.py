@@ -27,8 +27,7 @@ def test_preview_rejects_business_or_shared_ports_before_any_connection(port):
     validate_port(18027, 13327)
 
 
-def test_manifest_is_temporary_new_and_matches_the_explicit_database(acceptance_tmp_path):
-    tmp_path = acceptance_tmp_path
+def test_manifest_is_temporary_new_and_matches_the_explicit_database(tmp_path):
     file = tmp_path / 'panel-cases.json'
     write_manifest(file, target(), cases())
     assert not file.stat().st_mode & 0o077

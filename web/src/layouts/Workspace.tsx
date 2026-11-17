@@ -36,10 +36,6 @@ export default function Workspace() {
         <Activity size={17} />
         运行进度
       </NavLink>
-      <NavLink to="/schedules" onClick={() => setOpen(false)}>
-        <Activity size={17} />
-        定时增量
-      </NavLink>
     </nav>
   );
   const brand = (

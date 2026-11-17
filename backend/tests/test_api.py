@@ -121,7 +121,7 @@ def test_openapi_has_named_operations_and_typed_models(api):
     schema = client.get("/openapi.json").json()
     operations = {item["operationId"] for path in schema["paths"].values() for item in path.values()}
     assert operations == {"health", "get_config", "list_events", "get_event", "get_event_changes", "create_run", "list_runs", "get_run",
-                          "list_schedules", "start_schedules", "pause_schedule", "resume_schedule", "get_run_executions"}
+                          "list_schedules", "start_schedules", "pause_schedule", "resume_schedule"}
     assert {"ConfigResponse", "EventResponse", "EventRevision", "EvidenceResponse", "RunResponse", "CycleResponse"} <= set(schema["components"]["schemas"])
     assert "synthetic-secret-never-return" not in client.get("/api/v1/config").text
 
@@ -291,3 +291,30 @@ def test_configured_lan_host_keeps_same_origin_boundary(tmp_path):
         assert not repository.items
         assert client.post("/api/v1/runs", json={},
                            headers={"origin": "http://192.0.2.10:8000"}).status_code == 202
+
+
+def test_schedule_control_routes_delegate_without_advancing_on_get(api):
+    from types import SimpleNamespace
+    client, _, worker, application = api
+    calls = []
+    state = dict(configured=False, start_date=None, last_tick=None, source_error=None,
+                 worker_enabled=False, items=[])
+    def configure(start):
+        calls.append(("start", start))
+        state.update(configured=True, start_date=start)
+        return state
+    def control(schedule_id, action):
+        calls.append((action, schedule_id))
+        return state
+    application.state.services.schedules = SimpleNamespace(
+        status=lambda: state, configure=configure, control_customer=control)
+    assert client.get("/api/v1/schedules").json() == state and calls == []
+    assert client.post("/api/v1/schedules/start", json={"start_date": "2038-06-01"}).status_code == 200
+    schedule_id = str(uuid4())
+    for action in ("pause", "resume"):
+        assert client.post(f"/api/v1/schedules/{schedule_id}/{action}", json={}).status_code == 200
+    assert calls == [("start", "2038-06-01"), ("pause", schedule_id), ("resume", schedule_id)]
+    assert worker.notifications == 2
+    assert client.post("/api/v1/schedules/start", json={"start_date": "invalid"}).status_code == 422
+    assert client.post("/api/v1/schedules/not-a-uuid/pause", json={}).status_code == 422
+    assert len(calls) == 3

@@ -32,7 +32,7 @@ new 表示首次纳入本系统跟进，不表示问题刚刚发生。首次接�
 
 def group_matching_version():
     """冻结本群程序规则及模型补充约定，代码规则变化时同步递增版本。"""
-    return "conversation-matching-v2-" + hashlib.sha256(GROUP_POLICY.encode()).hexdigest()[:16]
+    return "conversation-matching-v3-" + hashlib.sha256(GROUP_POLICY.encode()).hexdigest()[:16]
 
 
 def constrain(candidate, *, retrieval, available, eligible):

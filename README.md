@@ -79,10 +79,6 @@ npm run dev
 - **事件**：按客户和六类主类型筛选，查看事件详情、消息证据和历次变化。
 - **处理记录**：选择客户、日期范围、处理周期和数据读取方式，提交后台处理，查看逐轮新建、更新与待确认。刷新后可继续查看持久化记录。
 
-运行进度页的“处理新时段”默认接续最近成功任务的结束时间，可精确选择北京时间的开始和结束时刻（左闭右开），缺省读取官方消息。每轮“新消息如何处理”直接展示当时的新消息、同群历史候选、直接依据、分析建议、程序决定及实际提交收据；失败、零事件和待确认窗口也能查看，不必先生成事件。运行期间自动刷新过程，结束后只读保存结果。逐轮结果默认展开，点击窗口可切换查看。过程接口为 `GET /api/v1/runs/{run_id}/executions`，必须提供客户、分析范围和从零开始的 `window_index`，按窗口分页，不触发取数、模型、重试或核实。
-
-过程页实库交互验收可复用 `scripts/serve_scheduling_acceptance.py`，显式连接全新隔离 MySQL 库后，以 `DAKE_RUN_TRACE_TEST_URL=http://127.0.0.1:<隔离网页端口> npm test -- tests/runTraceLive.spec.ts` 运行；连接约束见[定时增量验收说明](docs/定时增量验收说明.md)。验收只使用虚构客户、空消息和 stub，不调用真实来源或模型。
-
 变化面板首次仅加载已保存修订、关联执行状态和提交核对结果；展开“处理详情”后再加载模型输入及判断依据。有未结束的关联执行或任务时才自动轮询，其他情况可点击“刷新”。接口 `include_details` 缺省为 `true` 以兼容现有调用，网页首屏显式传 `false`；响应的 `details_included` 区分详情未加载和确实没有记录。
 
 真实客户抽取需显式设置 `LLM_PROVIDER=xhub`；默认 `stub` 只验证处理链路，不生成分析事件。
@@ -149,7 +145,7 @@ npm run dev
 docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" exec mysql --user="$MYSQL_USER" "$MYSQL_DATABASE"' < backend/migrations/003_processing_schedules.sql
 ```
 
-客户名单接入后，在根 `.env` 设置 `SCHEDULE_ENABLED=1` 并重启后端，从网页“定时增量”选择开始日期。独立运行入口为 `dake schedule run`；外部定时器可调用 `dake schedule tick` 编排到原任务队列。默认不调用真实模型、不自动发现客户。
+客户名单接入后，用 `dake schedule start --start YYYY-MM-DD` 或 `POST /api/v1/schedules/start`（JSON 字段 `start_date`）配置起点；在根 `.env` 设置 `SCHEDULE_ENABLED=1` 并重启后端可启用持续编排。独立运行入口为 `dake schedule run`；外部定时器可调用 `dake schedule tick` 编排到原任务队列。默认不调用真实模型、不自动发现客户。
 
 名单格式、配置参数、命令行操作、恢复边界与独立 MySQL 验收统一见 [定时增量验收说明](docs/定时增量验收说明.md)。真实名单尚待交接，不将本地合成测试等同于真实客户联调。
 
@@ -199,7 +195,6 @@ docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" exec mysql --use
 | `data/mysql/` | 本项目 MySQL 数据 |
 | `data/state/` | 下次处理窗口的本地水位 |
 | `data/snapshots/` | 每轮事件快照和创建、更新记录 |
-| `data/run-results/` | 任务周期结果日志，用于进度写入中断后的恢复 |
 
 快照可能含有证据和事件概述，应与原始聊天一样保留在本地，不写入 README、测试期望值或提交说明。
 
@@ -254,4 +249,4 @@ npm run openapi
 
 原始聊天数据和密钥不要提交进仓库。
 
-本群事件归属的规则、004 迁移及开启方式见 [本群事件匹配说明](docs/本群事件匹配说明.md)。默认关闭；跨群事件间关联由另一模块负责。
+所有新任务只匹配本群事件，运行前必须完成 004 迁移，详见 [本群事件匹配说明](docs/本群事件匹配说明.md)。跨群事件间关联由另一模块负责。旧任务与旧调度模板须先迁移策略，不能直接恢复执行。

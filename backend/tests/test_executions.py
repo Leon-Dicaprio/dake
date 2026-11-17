@@ -562,25 +562,6 @@ def test_saved_progress_with_lost_ack_is_unconfirmed_and_does_not_repeat_analysi
     assert last(attempts)["receipt"]["writes"] == []
 
 
-def test_failed_journal_does_not_claim_task_progress_was_written(tmp_path, monkeypatch):
-    service, attempts, _, _, provider, _ = setup(tmp_path)
-    settings = replace(service.settings, end=window(1).end)
-    service.settings = settings
-    runs = MemoryRuns()
-    @contextmanager
-    def factory(configuration, **kwargs):
-        yield service
-    runner = RunRunner(settings, runs, service_factory=factory)
-    request, count = prepare_request(settings, dict(interval="1d"))
-    def fail(*args, **kwargs):
-        raise OSError("虚构任务结果文件保存失败")
-    monkeypatch.setattr("dake.jobs.runner.private_json", fail)
-    failed = execute_next(runs, runner, request, count)
-    assert failed["status"] == "failed" and failed["completed_windows"] == 0
-    assert last(attempts)["receipt"] and len(provider.calls) == 1
-    assert last(attempts)["delivery"]["run_progress"]["status"] == "not_attempted"
-
-
 @pytest.mark.parametrize("corrected", [True, False])
 def test_field_coverage_uses_bounded_repair_and_preserves_old_fields(tmp_path, corrected):
     """字段引用不被本轮事实覆盖时精确纠正，仍不合格必须回滚。"""

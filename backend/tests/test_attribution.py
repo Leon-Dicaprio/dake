@@ -93,8 +93,7 @@ def test_independent_new_is_not_merged_by_topic(tmp_path, same_batch):
 @pytest.mark.parametrize("day,renamed", [(2, True), (10, False), (10, True)])
 def test_progress_reuses_identity_with_changed_topic_or_long_gap(tmp_path, day, renamed):
     service, store, provider, source, old, event_id = opened(tmp_path)
-    follow = message("follow", day, "虚构工单 CASE-SYN-42 今天又试过仍上传失败，清理缓存也无效",
-                     conversation_id="synthetic-second-room")
+    follow = message("follow", day, "虚构工单 CASE-SYN-42 今天又试过仍上传失败，清理缓存也无效")
     source.messages.append(follow)
     provider.mapping[follow.message_id] = candidate(follow, "update", event_id, [old],
         topic_key="虚构文件传输" if renamed else TOPIC)
@@ -112,19 +111,23 @@ def test_progress_reuses_identity_with_changed_topic_or_long_gap(tmp_path, day, 
         assert provider.background.items[0]["id"] == old.key
 
 
-def test_duplicate_keeps_entire_event_and_records_association_once(tmp_path):
+@pytest.mark.parametrize("same_window", [False, True])
+def test_duplicate_keeps_entire_event_and_records_association_once(tmp_path, same_window):
     service, store, provider, source, old, event_id = opened(tmp_path)
     before = deepcopy(store.events[event_id])
-    ack = message("ack", 2, "虚构工单 CASE-SYN-42 的消息收到了，没有其他反馈")
+    day = 1 if same_window else 2
+    ack = message("ack", day, "虚构工单 CASE-SYN-42 的消息收到了，没有其他反馈")
     source.messages.append(ack)
     provider.mapping[ack.message_id] = candidate(ack, "duplicate", event_id, [old])
-    result = service.run_window(UID, window(2))
+    result = service.run_window(UID, window(day))
     assert result.processed == 1 and not result.created and not result.updated and not result.review
     assert store.events[event_id] == before
+    saved = service.state.load_snapshot(UID, service.stream, window(day))
+    assert saved["created"] == saved["updated"] == []
     receipt = store.attributions[(ack.key, service.stream)]
     assert receipt["digest"] == ack.digest
     assert receipt["records"][0]["event_id"] == event_id and receipt["records"][0]["action"] == "duplicate"
-    retry = service.run_window(UID, window(2))
+    retry = service.run_window(UID, window(day))
     assert retry.processed == 0 and len(provider.calls) == 2
     assert store.events[event_id] == before and store.attributions[(ack.key, service.stream)] == receipt
 

@@ -47,22 +47,3 @@ export async function getRun(
     ...(options || {}),
   });
 }
-
-/** Get Run Executions 先核对任务归属，再读取本窗口过程；失败和零事件窗口也能查看。 GET /api/v1/runs/${param0}/executions */
-export async function getRunExecutions(
-  // 叠加生成的Param类型 (非body参数swagger默认没有生成对象)
-  params: API.getRunExecutionsParams,
-  options?: { signal?: AbortSignal }
-) {
-  const { run_id: param0, ...queryParams } = params;
-  return request<API.RunExecutionsResponse>(
-    `/api/v1/runs/${param0}/executions`,
-    {
-      method: "GET",
-      params: {
-        ...queryParams,
-      },
-      ...(options || {}),
-    }
-  );
-}

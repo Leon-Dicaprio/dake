@@ -6,11 +6,6 @@ import { Dialog, DialogContent, DialogHeading } from '@/components/ui/dialog';
 import { durationLabel, errorMessage } from '@/lib/utils';
 import { api } from '@/services/api';
 
-function localInput(value: string) {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return `${value}T00:00`;
-  return new Date(Date.parse(value) + 8 * 3600000).toISOString().slice(0, 16);
-}
-
 /** 提交一次明确范围的客户聊天处理任务。 */
 export function RunDialog({
   config,
@@ -22,20 +17,16 @@ export function RunDialog({
   onCreated: (run: API.RunResponse) => void;
 }) {
   const [uid, setUid] = useState(config.uid);
-  const [start, setStart] = useState(localInput(config.start));
-  const [end, setEnd] = useState(
-    config.end.includes('T')
-      ? localInput(config.end)
-      : `${new Date(Date.parse(`${config.end}T00:00:00Z`) + 86400000).toISOString().slice(0, 10)}T00:00`,
-  );
+  const [start, setStart] = useState(config.start.slice(0, 10));
+  const [end, setEnd] = useState(config.end.slice(0, 10));
   const [interval, setInterval] = useState(config.interval);
-  const [offline, setOffline] = useState(false);
+  const [offline, setOffline] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (start >= end) {
-      setError('结束时间须晚于开始时间。');
+    if (start > end) {
+      setError('结束日期不能早于开始日期。');
       return;
     }
     setError('');
@@ -43,8 +34,8 @@ export function RunDialog({
     try {
       const run = await api.createRun({
         uid: uid.trim(),
-        start: `${start}:00+08:00`,
-        end: `${end}:00+08:00`,
+        start,
+        end,
         interval,
         offline,
       });
@@ -86,9 +77,9 @@ export function RunDialog({
           </label>
           <div className="form-grid">
             <label className="form-field">
-              <span>开始时间</span>
+              <span>开始日期</span>
               <input
-                type="datetime-local"
+                type="date"
                 name="start"
                 required
                 value={start}
@@ -97,10 +88,10 @@ export function RunDialog({
             </label>
             <label className="form-field">
               <span>
-                结束时间<span className="field-hint">不含此刻</span>
+                结束日期<span className="field-hint">含当天</span>
               </span>
               <input
-                type="datetime-local"
+                type="date"
                 name="end"
                 required
                 value={end}
@@ -109,9 +100,6 @@ export function RunDialog({
               />
             </label>
           </div>
-          <p className="field-hint">
-            使用北京时间；可先处理一个窗口，再处理紧接的窗口，检查新消息如何更新同一事件。
-          </p>
           <label className="form-field">
             <span>每轮处理范围</span>
             <select

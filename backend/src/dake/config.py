@@ -23,6 +23,8 @@ API_MAX_RANGE_DAYS = 31
 API_MAX_WINDOWS = 2048
 API_MAX_PENDING_RUNS = 32
 API_RUN_LIST_LIMIT = 200
+SCHEDULE_INTERVAL = timedelta(minutes=15)
+SCHEDULE_RETRY_DELAYS = (60, 300, 900)
 
 
 def duration(value: str) -> timedelta:
@@ -84,7 +86,7 @@ class Settings:
     mysql_host: str = "127.0.0.1"
     schedule_enabled: bool = False
     schedule_poll_seconds: int = 5
-    schedule_retry_delays: tuple[int, ...] = (60, 300, 900)
+    schedule_retry_delays: tuple[int, ...] = SCHEDULE_RETRY_DELAYS
     chat_retries: int = 2
     mysql_port: int = 3307
     mysql_database: str = "dake_aftersales"
@@ -103,8 +105,6 @@ class Settings:
     ingest_lookback: timedelta = timedelta(days=2)
     history_retrieval: HistoryRetrievalSettings = field(default_factory=HistoryRetrievalSettings)
     history_context: HistoryContextSettings = field(default_factory=HistoryContextSettings)
-    # 显式迁移群索引后启用；旧执行及其收据继续沿用原策略。
-    group_matching_enabled: bool = False
     group_batch_chars: int = 16000
     provider: str = "stub"
     llm_model: str = "gpt-6.1-sol"
@@ -125,11 +125,10 @@ class Settings:
         if not data_dir.is_absolute():
             data_dir = PROJECT_ROOT / data_dir
         result = cls(
-            group_matching_enabled=get("GROUP_MATCHING_ENABLED", "0") == "1",
             group_batch_chars=int(get("GROUP_BATCH_CHARS", "16000")),
             schedule_enabled=get("SCHEDULE_ENABLED", "0") == "1",
             schedule_poll_seconds=int(get("SCHEDULE_POLL_SECONDS", "5")),
-            schedule_retry_delays=tuple(int(v.strip()) for v in get("SCHEDULE_RETRY_DELAYS_SECONDS", "60,300,900").split(",")),
+            schedule_retry_delays=tuple(int(v.strip()) for v in get("SCHEDULE_RETRY_DELAYS_SECONDS", ",".join(map(str, SCHEDULE_RETRY_DELAYS))).split(",")),
             mysql_host=get("MYSQL_HOST", "127.0.0.1"),
             mysql_port=int(get("MYSQL_PORT", "3307")),
             mysql_database=get("MYSQL_DATABASE", "dake_aftersales"),

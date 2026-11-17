@@ -57,24 +57,11 @@ class LocalState:
                 self.write(uid, stream, value)
 
     def snapshot(self, result):
-        """保存窗口结束时的完整事件变化，空重试保留原来的演示记录。"""
+        """保存本窗口结果；空重试保留已保存记录，恢复结果由事务收据提供。"""
         path = self.snapshot_path(result.uid, result.stream, result.window)
         if path.exists() and not (result.processed or result.created or result.updated or result.review):
             return path
-        payload = result.to_dict()
-        # 数据库已提交而快照写入失败时，重试不会再次分析；从已提交修订恢复展示记录。
-        if not (result.created or result.updated):
-            created, updated = [], []
-            for event in result.events:
-                for revision in event.get("updated_by", []):
-                    if (revision["window_start"] == result.window.start.isoformat()
-                            and revision["window_end"] == result.window.end.isoformat()):
-                        target = created if revision["action"] == "created" else updated
-                        if event["event_id"] not in target:
-                            target.append(event["event_id"])
-            if created or updated:
-                payload.update(created=created, updated=updated, recovered_from_history=True)
-        private_json(path, payload)
+        private_json(path, result.to_dict())
         return path
 
     def snapshot_path(self, uid, stream, window):

@@ -2,7 +2,6 @@
 
 from dataclasses import asdict, replace
 from datetime import timedelta
-import json
 import math
 import threading
 from time import monotonic
@@ -16,7 +15,6 @@ from ..analysis.group_matching import group_matching_version
 from ..config import API_MAX_RANGE_DAYS, API_MAX_WINDOWS, HistoryContextSettings, HistoryRetrievalSettings, bound, duration
 from ..domain.models import parse_time, windows
 from ..ingestion.client import validate_uid
-from ..repositories.local_state import private_json
 from ..repositories.attempts import AttemptError, AttemptPendingVerification, DeliveryError
 from ..services.queries import duration_label
 from ..services.replay import ReplayService
@@ -61,8 +59,7 @@ def prepare_request(settings, values: dict) -> tuple[dict, int]:
                 ingest_lookback=duration_label(settings.ingest_lookback),
                 history_retrieval=asdict(settings.history_retrieval),
                 history_context=asdict(settings.history_context),
-                **(dict(group_matching_enabled=True, group_batch_chars=settings.group_batch_chars,
-                        group_matching_version=group_matching_version()) if settings.group_matching_enabled else {}),
+                group_batch_chars=settings.group_batch_chars, group_matching_version=group_matching_version(),
                 attribution_version=attribution_version() if settings.provider == "xhub" else None,
                 default_status=settings.default_status, default_severity=settings.default_severity,
                 closed_statuses=list(settings.closed_statuses),
@@ -71,6 +68,33 @@ def prepare_request(settings, values: dict) -> tuple[dict, int]:
                 llm_max_tokens=settings.llm_max_tokens if settings.provider == "xhub" else None,
                 llm_timeout_seconds=settings.llm_timeout_seconds if settings.provider == "xhub" else None,
                 analysis_stream=configured_stream(settings)), total
+
+
+def restore_settings(settings, request):
+    """从已冻结请求还原执行配置；旧策略须显式迁移，不能补用当前缺省。"""
+    if request["mode"] != "official":
+        raise ValueError("该运行模式已移除")
+    if request.get("group_matching_version") != group_matching_version():
+        raise XHubError("本群归属策略已变化，请重新提交任务")
+    frozen = replace(settings, uid=request["uid"],
+        start=parse_time(request.get("business_start", request["start"])),
+        end=parse_time(request["end"]), interval=duration(request["interval"]),
+        chat_retries=0 if request.get("schedule_id") else settings.chat_retries,
+        group_batch_chars=request["group_batch_chars"], provider=request["provider"],
+        llm_model=request["llm_model"] or settings.llm_model,
+        llm_max_tokens=request["llm_max_tokens"] or settings.llm_max_tokens,
+        llm_timeout_seconds=request["llm_timeout_seconds"] or settings.llm_timeout_seconds,
+        context_lookback=duration(request["context_lookback"]), match_window=duration(request["match_window"]),
+        closed_grace=duration(request["closed_grace"]), ingest_lookback=duration(request["ingest_lookback"]),
+        history_retrieval=HistoryRetrievalSettings(**request["history_retrieval"]),
+        history_context=HistoryContextSettings(**request["history_context"]),
+        default_status=request["default_status"], default_severity=request["default_severity"],
+        closed_statuses=tuple(request["closed_statuses"]))
+    if frozen.provider == "xhub" and request["attribution_version"] != attribution_version():
+        raise XHubError("增量归属策略已变化，请重新提交任务；原分析范围及已处理消息保持不变")
+    if request["analysis_stream"] != configured_stream(frozen):
+        raise XHubError("提示词或输出合约已变化，请重新提交任务")
+    return frozen
 
 
 class RunRunner:
@@ -150,77 +174,14 @@ class RunRunner:
             finally:
                 self._keeper = None
 
-    def _journal_path(self, run_id, index):
-        return self.settings.data_dir / "run-results" / run_id / f"{index:04d}.json"
-
-    def _restore_cycle(self, result, interrupted, service, before_revisions):
-        """恢复已提交但未记入任务进度的变化，普通重复运行仍返回零增量。"""
-        payload = result.to_dict()
-        if interrupted is None:
-            return payload
-        restored = None
-        journal = self._journal_path(interrupted["run_id"], interrupted["completed_windows"])
-        if journal.exists():
-            saved = json.loads(journal.read_text(encoding="utf-8"))
-            if (saved.get("window") == payload["window"] and saved.get("uid") == result.uid
-                    and saved.get("stream") == result.stream):
-                restored = saved
-        baseline = interrupted.get("current_baseline") or {}
-        created, updated = [], []
-        for event in result.events:
-            for revision in event.get("updated_by", [])[baseline.get(event["event_id"], 0):before_revisions.get(event["event_id"], 0)]:
-                if (revision["window_start"] == payload["window"]["start"]
-                        and revision["window_end"] == payload["window"]["end"]):
-                    target = created if revision["action"] == "created" else updated
-                    if event["event_id"] not in target:
-                        target.append(event["event_id"])
-        if restored is None and (created or updated):
-            # 旧修订可证明事件变化，但本次重试可能已覆盖快照；不猜测旧消息计数。
-            restored = dict(created=created, updated=updated, processed=0, ingested=0, counts_complete=False)
-        if restored is not None:
-            # 重试可能同时摄入迟到消息；恢复旧变化时仍保留本次新变化和最新事件版本。
-            payload["created"] = list(dict.fromkeys(restored.get("created", []) + payload["created"]))
-            payload["updated"] = list(dict.fromkeys(restored.get("updated", []) + payload["updated"]))
-            payload["processed"] += restored.get("processed", 0)
-            payload["ingested"] += restored.get("ingested", 0)
-            payload["recovered_from_history"] = True
-            payload["counts_complete"] = restored.get("counts_complete", True)
-        return payload
-
     def execute(self, run):
         """每个任务独占业务连接，通过既有 ReplayService 按配置周期处理。"""
         request = run["request"]
-        settings = replace(self.settings, uid=request["uid"], start=parse_time(request.get("business_start", request["start"])),
-                           chat_retries=0 if request.get("schedule_id") else self.settings.chat_retries,
-                           group_matching_enabled=request.get("group_matching_enabled", False),
-                           group_batch_chars=request.get("group_batch_chars", 16000),
-                           provider=request.get("provider", "stub"),
-                           llm_model=request.get("llm_model") or self.settings.llm_model,
-                           llm_max_tokens=request.get("llm_max_tokens") or self.settings.llm_max_tokens,
-                           llm_timeout_seconds=request.get("llm_timeout_seconds") or self.settings.llm_timeout_seconds,
-                           end=parse_time(request["end"]), interval=duration(request["interval"]),
-                           context_lookback=duration(request.get("context_lookback", duration_label(self.settings.context_lookback))),
-                           match_window=duration(request.get("match_window", duration_label(self.settings.match_window))),
-                           closed_grace=duration(request.get("closed_grace", duration_label(self.settings.closed_grace))),
-                           ingest_lookback=duration(request.get("ingest_lookback", duration_label(self.settings.ingest_lookback))),
-                           history_retrieval=HistoryRetrievalSettings(**request.get(
-                               "history_retrieval", asdict(self.settings.history_retrieval))),
-                           history_context=HistoryContextSettings(**request.get(
-                               "history_context", asdict(self.settings.history_context))),
-                           default_status=request.get("default_status", self.settings.default_status),
-                           default_severity=request.get("default_severity", self.settings.default_severity),
-                           closed_statuses=tuple(request.get("closed_statuses", self.settings.closed_statuses)))
         try:
-            if request["mode"] != "official":
-                raise ValueError("该运行模式已移除")
-            if settings.group_matching_enabled and request.get("group_matching_version") != group_matching_version():
-                raise XHubError("本群归属策略已变化，请重新提交任务")
-            if (request["mode"] == "official" and settings.provider == "xhub"
-                    and request.get("attribution_version") != attribution_version()):
-                raise XHubError("增量归属策略已变化，请重新提交任务；原分析范围及已处理消息保持不变")
-            if request.get("analysis_stream") and request["analysis_stream"] != configured_stream(settings):
-                raise XHubError("提示词或输出合约已变化，请重新提交任务")
+            settings = restore_settings(self.settings, request)
             with self.service_factory(settings, offline=request["offline"]) as service:
+                if service.attempts is None:
+                    raise AttemptError("后台任务必须配置执行收据存储")
                 retry_attempts = {0: request["scheduled_retry_of"]} if request.get("scheduled_retry_of") else {}
                 # 仅使用本任务已持久化的进度；不移动业务起点，也不把文件水位当成提交证明。
                 start_index = run["completed_windows"]
@@ -246,17 +207,13 @@ class RunRunner:
                                 any(prior.get(key) != request.get(key) for key in
                                     ("attribution_version", "group_matching_version"))):
                             interrupted = None
-                    baseline = (service.store.event_revision_counts(settings.uid, service.stream)
-                        if settings.group_matching_enabled else {event.event_id: len(event.updated_by)
-                            for event in service.store.list_events(settings.uid, service.stream)})
-                    self.repository.begin_window(run["run_id"], self.runner_id, window_value, baseline)
-                    if interrupted and service.attempts is not None and not request.get("schedule_id"):
+                    self.repository.begin_window(run["run_id"], self.runner_id, window_value)
+                    if interrupted:
                         previous = service.attempts.for_run_window(settings.uid, service.stream,
                             interrupted["run_id"], interrupted["completed_windows"], window)
                         if previous is not None:
                             retry_attempts[index] = previous["attempt_id"]
-                    elif (service.attempts is not None and index == start_index
-                          and run.get("current_window") == window_value):
+                    elif index == start_index and run.get("current_window") == window_value:
                         # 显式恢复同一任务也保留失败尝试关系；有收据时仅恢复展示。
                         previous = service.attempts.for_run_window(settings.uid, service.stream,
                             run["run_id"], index, window)
@@ -264,30 +221,18 @@ class RunRunner:
                             retry_attempts[index] = previous["attempt_id"]
                     result = next(results)
                     if self._keeper is not None and not self._leader_alive():
-                        if result.attempt_id:
-                            raise DeliveryError(f"执行 {result.attempt_id} 的业务已提交，执行权变化导致进度未保存；请恢复展示")
-                        raise RunInterrupted()
-                    # 有新执行收据时使用精确恢复结果，不把旧成果合并进本次分析收据。
-                    payload = result.to_dict() if result.attempt_id else self._restore_cycle(result, interrupted, service, baseline)
-                    payload = compact_progress(payload)
-                    # 事件已提交后先留下私有结果，再追加任务进度；后者失败时可恢复真实变化。
-                    progress_requested = False
+                        raise DeliveryError(f"执行 {result.attempt_id} 的业务已提交，执行权变化导致进度未保存；请恢复展示")
+                    payload = compact_progress(result.to_dict())
                     try:
-                        private_json(self._journal_path(run["run_id"], index), payload)
-                        progress_requested = True
                         self.repository.complete_window(run["run_id"], self.runner_id, payload)
                     except Exception:
-                        if result.attempt_id:
-                            try:
-                                service.attempts.delivery(settings.uid, service.stream, result.attempt_id, "run_progress",
-                                    "unconfirmed" if progress_requested else "not_attempted")
-                            except Exception:
-                                pass
-                            detail = "任务进度写入未确认" if progress_requested else "任务结果文件保存失败，尚未写入任务进度"
-                            raise DeliveryError(f"执行 {result.attempt_id} 的业务已提交，{detail}；请恢复展示") from None
-                        raise
-                    if result.attempt_id:
-                        service.attempts.delivery(settings.uid, service.stream, result.attempt_id, "run_progress", "saved")
+                        try:
+                            service.attempts.delivery(settings.uid, service.stream, result.attempt_id,
+                                                      "run_progress", "unconfirmed")
+                        except Exception:
+                            pass
+                        raise DeliveryError(f"执行 {result.attempt_id} 的业务已提交，任务进度写入未确认；请恢复展示") from None
+                    service.attempts.delivery(settings.uid, service.stream, result.attempt_id, "run_progress", "saved")
                     if interrupted is not None:
                         self.repository.mark_recovered(interrupted["run_id"], run["run_id"])
             if self._keeper is not None and not self._leader_alive():

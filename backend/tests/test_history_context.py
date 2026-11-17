@@ -55,7 +55,7 @@ def event(number=1, messages=None, **changes):
     start, end = min(m.sent_at for m in messages), max(m.sent_at for m in messages)
     value = Event(str(UUID(int=number)), UID, STREAM, "排障", "虚构上传", start, end,
                   "未知", "未知", "虚构上传失败", start.replace(hour=0), evidence=[
-                      dict(source=m.source, message_id=m.message_id, send_time=m.sent_at.isoformat(),
+                      dict(source=m.source, conversation_id=m.conversation_id, message_id=m.message_id, send_time=m.sent_at.isoformat(),
                            digest=m.digest, excerpt=m.content[:160]) for m in messages])
     value = replace(value, **changes)
     snapshot = value.to_dict()
@@ -73,6 +73,9 @@ class ObservedStore(MemoryStore):
         super().__init__()
         self.messages = {m.key: deepcopy(m) for m in messages}
         self.events = {e.event_id: deepcopy(e) for e in events}
+        for stored in self.events.values():
+            with self.transaction(stored.uid):
+                self.index_event_groups(stored)
         self.message_reads, self.neighbor_reads = [], []
 
     def history_messages(self, uid, refs, before):
@@ -132,10 +135,11 @@ def test_neighbor_is_same_group_reading_background_with_safe_version_basis():
     proof = event(2, [neighbor], topic_key="独立事项", summary="另一件事项")
     store = ObservedStore([old, neighbor, other_group, other_customer], [event(messages=[old]), proof])
     result, history, _ = retrieve(store)
-    assert len(history.candidates) == 1
+    assert len(history.candidates) == 2
     assert {item["id"] for item in result.items} == {old.key, neighbor.key}
     entry = next(item for item in result.items if item["id"] == neighbor.key)
-    assert entry["links"] == [dict(event_id=event().event_id, kind="neighbor", anchor_key=old.key)]
+    assert dict(event_id=event().event_id, kind="neighbor", anchor_key=old.key) in entry["links"]
+    assert dict(event_id=event(2).event_id, kind="event_evidence", anchor_key=None) in entry["links"]
     assert entry["availability"] == "full"
 
 
@@ -166,7 +170,7 @@ def test_missing_or_edited_evidence_uses_only_saved_excerpt(missing):
     result, _, _ = retrieve(store)
     assert text(result) == old.content
     assert result.items[0]["availability"] == "excerpt_only"
-    assert result.items[0]["conversation_id"] is None
+    assert result.items[0]["conversation_id"] == old.conversation_id
     assert result.items[0]["original_chars"] is None
     assert "evidence_version_unavailable" in result.reasons
     assert not store.neighbor_reads
@@ -294,7 +298,8 @@ class ContextProvider(FakeProvider):
 def build_service(tmp_path):
     old = message()
     settings = Settings(uid=UID, start=window(1).start, end=window(12).end, data_dir=tmp_path)
-    provider = ContextProvider({old.message_id: Candidate("排障", "虚构上传", "虚构上传失败", [old.key])})
+    provider = ContextProvider({old.message_id: Candidate("排障", "虚构上传", "虚构上传失败", [old.key],
+        decision="new", decision_reason="虚构首次记录", basis=[dict(message_id=old.key, quote=old.content)])})
     store, source = MemoryStore(), FakeSource([old])
     service = IncrementalService(store, source, provider, settings)
     service.run_window(UID, window(1))
@@ -405,7 +410,8 @@ def test_formal_provider_receives_background_through_shared_service_with_mock_ht
     store = MemoryStore()
     store.messages[old.key] = old
     old_event = event(messages=[old], stream=provider.name)
-    store.events[old_event.event_id] = deepcopy(old_event)
+    with store.transaction(UID):
+        store.save_event(old_event)
     service = IncrementalService(store, FakeSource([new]), provider, settings)
     try:
         result = service.run_window(UID, window(10))

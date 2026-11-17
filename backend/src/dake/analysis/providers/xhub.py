@@ -99,13 +99,9 @@ class XHubProvider:
         self.prompt_hash = hashlib.sha256(self.prompt.encode()).hexdigest()
         self.schema_hash = hashlib.sha256(json.dumps(schema, sort_keys=True).encode()).hexdigest()
         self.name = xhub_identity(config.model, config.response_format, config.max_tokens)["stream"]
-        # 仅 TCP/TLS 建连失败允许最多两次重试；HTTP 请求发出后的读取失败不重发。
-        # 独立连接超时避免一个不可达地址占满整个模型生成等待时间，证书校验保持开启。
-        network = transport
-        if network is None and not any(os.environ.get(key) for key in ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy")):
-            network = httpx.HTTPTransport(retries=2)
+        # 网络重试由调度层统一计数，连接等待与模型生成等待分别设置。
         self.client = httpx.Client(timeout=httpx.Timeout(config.timeout_seconds, connect=min(5, config.timeout_seconds)),
-                                  follow_redirects=False, transport=network)
+                                  follow_redirects=False, transport=transport)
         self.traces: list[dict] = []
         self.sender_kinds = None
         self.sender_roles = {}
@@ -269,7 +265,7 @@ class XHubProvider:
                                   (HISTORY_POLICY if self.history_retrieval is not None else "") +
                                   (CONTEXT_POLICY if getattr(self, "history_context", None) is not None else "") +
                                   (ATTRIBUTION_POLICY if self.history_retrieval is not None else "") +
-                                  (GROUP_POLICY if self.settings.group_matching_enabled else "") + "\n输出 JSON Schema：\n" +
+                                  GROUP_POLICY + "\n输出 JSON Schema：\n" +
                                   json.dumps(self.schema, ensure_ascii=False)},
                                  {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}, *repair],
                        response_format=response_format, max_tokens=self.config.max_tokens, stream=False)
@@ -314,8 +310,6 @@ class XHubProvider:
             normalizations = []
             candidates = parser(content, new_messages, context, visible_events,
                 **({"normalizations": normalizations,
-                    "review_initial_conflicts": self.settings.group_matching_enabled,
-                    "review_continuity_conflicts": self.settings.group_matching_enabled,
                     "history_items": payload.get("history_context", {}).get("items", [])}
                    if self.history_retrieval is not None else {}))
             trace["normalizations"] = normalizations
@@ -333,7 +327,7 @@ class XHubProvider:
         except httpx.HTTPError as error:
             trace["error"] = "transport_error"
             trace["transport_error_type"] = type(error).__name__
-            raise XHubTransientError("XHub 连接或读取失败；请求发出后的超时不会自动重发") from None
+            raise XHubTransientError("XHub 网络请求失败或超时；交由调度层有限重试") from None
         except (KeyError, IndexError, TypeError, ValueError) as error:
             trace["error"] = "contract_error" if isinstance(error, ContractError) else "protocol_error"
             if isinstance(error, ContractError):

@@ -257,14 +257,14 @@ class RunRepository:
                 started_at=%s WHERE run_id=%s AND status='queued'""", (runner_id, _now(), run_id))
         return self.get(run_id, internal=True) if changed else None
 
-    def begin_window(self, run_id: str, runner_id: str, window: dict, baseline: dict):
-        """执行前保存窗口和已有修订数，崩溃后能区分新增提交与早先历史。"""
+    def begin_window(self, run_id: str, runner_id: str, window: dict):
+        """执行前保存当前窗口，失败后按该窗口定位实际执行收据。"""
         with self.connection() as store:
-            _, changed = store._execute("""UPDATE processing_runs SET current_window=%s,current_baseline=%s
+            _, changed = store._execute("""UPDATE processing_runs SET current_window=%s
                 WHERE run_id=%s AND status='running' AND runner_id=%s""",
-                (_encoded(window), _encoded(baseline), run_id, runner_id))
+                (_encoded(window), run_id, runner_id))
             if not changed:
-                # MySQL 对完全相同的窗口和基线返回零行变化；这不等于执行权丢失。
+                # MySQL 对完全相同的窗口返回零行变化；这不等于执行权丢失。
                 owned, _ = store._execute("SELECT run_id FROM processing_runs "
                     "WHERE run_id=%s AND status='running' AND runner_id=%s", (run_id, runner_id))
                 changed = bool(owned)
@@ -292,7 +292,7 @@ class RunRepository:
     def interrupted_window(self, uid: str, mode: str, window: dict):
         """寻找尚未恢复的中断窗口，不把普通重复回放包装成新的事件变化。"""
         with self.connection() as store:
-            rows, _ = store._execute("SELECT " + SUMMARY_COLUMNS + """,current_baseline FROM processing_runs WHERE uid=%s AND mode=%s
+            rows, _ = store._execute("SELECT " + SUMMARY_COLUMNS + """ FROM processing_runs WHERE uid=%s AND mode=%s
                 AND status='failed' AND recovered_by IS NULL AND current_window IS NOT NULL
                 ORDER BY finished_at DESC""", (uid, mode))
         for row in rows:

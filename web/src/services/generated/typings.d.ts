@@ -574,14 +574,6 @@ declare namespace API {
     stream?: string | null;
   };
 
-  type getRunExecutionsParams = {
-    run_id: string;
-    uid: string;
-    stream: string;
-    window_index: number;
-    offset?: number;
-  };
-
   type getRunParams = {
     run_id: string;
     uid?: string | null;
@@ -644,10 +636,6 @@ declare namespace API {
     llm_timeout_seconds: number | null;
     /** Analysis Stream */
     analysis_stream: string | null;
-  };
-
-  type pauseScheduleParams = {
-    schedule_id: string;
   };
 
   type RecordedAttribution = {
@@ -713,10 +701,6 @@ declare namespace API {
     policy_version: string;
   };
 
-  type resumeScheduleParams = {
-    schedule_id: string;
-  };
-
   type ReviewResponse = {
     /** Review Flag */
     review_flag: string;
@@ -728,52 +712,6 @@ declare namespace API {
     possible_event_ids: string[];
     /** Reason */
     reason: string;
-  };
-
-  type RunExecution = {
-    /** Attempt Id */
-    attempt_id: string;
-    window: TimeWindow;
-    /** Outcome */
-    outcome: string;
-    /** Error Type */
-    error_type: string | null;
-    /** Stages */
-    stages: ExecutionStage[];
-    /** Inputs */
-    inputs: ExecutionInput[];
-    /** Histories */
-    histories: RunHistory[];
-    /** Contexts */
-    contexts: ExecutionContext[];
-    /** Suggestions */
-    suggestions: ExecutionSuggestion[];
-    /** Decisions */
-    decisions: ExecutionDecision[];
-    /** Commit Status */
-    commit_status: string;
-    /** Processed */
-    processed: number | null;
-    /** Writes */
-    writes: RunWrite[];
-  };
-
-  type RunExecutionsResponse = {
-    /** Items */
-    items: RunExecution[];
-    /** Available */
-    available: boolean;
-    /** Total */
-    total: number;
-    /** Next Offset */
-    next_offset: number | null;
-  };
-
-  type RunHistory = {
-    /** Metadata */
-    metadata: Record<string, any>;
-    /** Candidates */
-    candidates: Record<string, any>[];
   };
 
   type RunListResponse = {
@@ -823,75 +761,6 @@ declare namespace API {
     error: string | null;
     /** Cycles */
     cycles: CycleResponse[];
-  };
-
-  type RunWrite = {
-    /** Event Id */
-    event_id: string | null;
-    /** Action */
-    action: string | null;
-  };
-
-  type ScheduleListResponse = {
-    /** Configured */
-    configured: boolean;
-    /** Start Date */
-    start_date: string | null;
-    /** Last Tick */
-    last_tick: string | null;
-    /** Source Error */
-    source_error: string | null;
-    /** Worker Enabled */
-    worker_enabled: boolean;
-    /** Items */
-    items: ScheduleResponse[];
-  };
-
-  type ScheduleResponse = {
-    /** Schedule Id */
-    schedule_id: string;
-    /** Uid */
-    uid: string;
-    /** Stream */
-    stream: string;
-    /** Enabled */
-    enabled: boolean;
-    /** Status */
-    status: "active" | "paused" | "needs_verification";
-    /** Phase */
-    phase:
-      | "disabled"
-      | "paused"
-      | "needs_verification"
-      | "queued"
-      | "retry_wait"
-      | "catching_up"
-      | "waiting";
-    /** Business Start */
-    business_start: string;
-    /** Next Start */
-    next_start: string;
-    /** Active Run Id */
-    active_run_id: string | null;
-    /** Last Run Id */
-    last_run_id: string | null;
-    /** Retry Count */
-    retry_count: number;
-    /** Retry At */
-    retry_at: string | null;
-    /** Error */
-    error: string | null;
-    /** Last Success */
-    last_success: string | null;
-    /** Last Turn */
-    last_turn: string;
-    /** Pending Windows */
-    pending_windows: number;
-  };
-
-  type ScheduleStartRequest = {
-    /** Start Date */
-    start_date: string;
   };
 
   type ScopedChangeTask = {

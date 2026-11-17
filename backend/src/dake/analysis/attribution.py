@@ -70,8 +70,7 @@ def attribution_version():
     return "incremental-attribution-v1-" + hashlib.sha256(value.encode()).hexdigest()[:16]
 
 
-def parse_attribution_output(content, new_messages, context, existing_events, *, normalizations=None, history_items=(),
-                             review_initial_conflicts=False, review_continuity_conflicts=False):
+def parse_attribution_output(content, new_messages, context, existing_events, *, normalizations=None, history_items=()):
     """沿用字段及来源校验；关联依据在业务入口按当前窗口再次核对。"""
     content = align_quotes(content, [*context, *new_messages])
     available = evidence_map([*context, *new_messages])
@@ -105,9 +104,7 @@ def parse_attribution_output(content, new_messages, context, existing_events, *,
             normalizations.extend(dict(candidate_index=candidate_index, **item) for item in completed)
         try:
             validate_changes(candidate, available, {m.key for m in new_messages})
-        except InitialActionConflict as error:
-            if not review_initial_conflicts:
-                raise ContractError(f"candidates[{candidate_index}]：{error}") from None
+        except InitialActionConflict:
             # 已核验全部直接引文；保留模型原建议，由程序决定层降为待确认。
             if normalizations is not None:
                 normalizations.append(dict(candidate_index=candidate_index, field="changes",
@@ -117,8 +114,6 @@ def parse_attribution_output(content, new_messages, context, existing_events, *,
         try:
             validate_continuity(candidate, available, {m.key for m in new_messages})
         except ContinuityActionConflict:
-            if not review_continuity_conflicts:
-                raise
             if normalizations is not None:
                 normalizations.append(dict(candidate_index=candidate_index, field="continuity",
                     reason="continuity_action_conflict_requires_review"))

@@ -114,8 +114,7 @@ def test_cross_day_recurrence_creates_link_and_keeps_parent_unchanged(tmp_path):
     setup, confirmation = recovered(tmp_path)
     service, store, provider, _, old, event_id = setup
     parent = deepcopy(store.events[event_id])
-    new = message("again", 10, "虚构工单 CASE-SUM-42 之前恢复了，今天同一报告上传再次失败。",
-                  conversation_id="synthetic-other-room")
+    new = message("again", 10, "虚构工单 CASE-SUM-42 之前恢复了，今天同一报告上传再次失败。")
     result = recur(setup, new)
     assert not result.updated and not result.review and len(result.created) == 1
     event = store.events[result.created[0]]

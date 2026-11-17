@@ -1,14 +1,4 @@
 @import "tailwindcss";
-
-.schedule-start { display: flex; align-items: end; gap: 16px; margin: 24px 0 12px; flex-wrap: wrap; }
-.schedule-start .form-field { width: 250px; }
-.schedule-help { color: #78716c; font-size: 13px; line-height: 1.7; margin: 12px 0; }
-.schedule-table-scroll { overflow-x: auto; margin-top: 24px; }
-.schedule-table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
-.schedule-table th { color: #78716c; font-weight: 500; padding: 12px; border-bottom: 1px solid #e7e5e4; white-space: nowrap; }
-.schedule-table td { padding: 16px 12px; border-bottom: 1px solid #f0eeea; vertical-align: top; }
-.schedule-table td p { margin: 0 0 4px; }
-.schedule-actions { display: flex; align-items: center; gap: 12px; white-space: nowrap; }
 @source "./src";
 
 @theme {
@@ -821,25 +811,3 @@ select:focus, select:focus-visible { outline: none; border-color: #d4d4d8; box-s
 .time-filter-popover footer > div { display: flex; gap: 8px; }
 .time-filter-popover [role="alert"] { color: #b91c1c; }
 .time-filter-popover button:focus-visible, .time-filter-trigger:focus-visible { outline: 2px solid #a89755; outline-offset: 2px; }
-
-/* 每个窗口直接展示新消息到保存结果的真实处理过程。 */
-.run-trace { margin: 24px 0; border: 1px solid var(--border, #e6e3db); border-radius: 12px; padding: 22px; }
-.run-trace-heading, .trace-caption { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.run-trace-heading h3 { font-size: 17px; margin: 0 0 6px; }
-.run-trace-heading p, .trace-caption span { font-size: 12px; color: #777368; }
-.trace-attempt { margin-top: 20px; }
-.trace-phases { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); list-style: none; gap: 12px; padding: 16px 0; margin: 12px 0; border-bottom: 1px solid #eeeae1; }
-.trace-phases li { display: grid; grid-template-columns: 24px 1fr; gap: 4px 6px; font-size: 12px; }
-.trace-phases li > span { grid-row: span 2; width: 22px; height: 22px; border-radius: 50%; background: #f6edce; display: grid; place-items: center; }
-.trace-phases small { color: #888274; }
-.run-trace h4 { margin: 22px 0 12px; font-size: 13px; font-weight: 600; }
-.trace-message, .trace-decision { border-bottom: 1px solid #eeeae1; padding: 12px 0; overflow-wrap: anywhere; }
-.trace-message p, .trace-decision p { white-space: pre-wrap; font-size: 13px; line-height: 1.7; margin: 6px 0; }
-.trace-message small, .trace-decision small { display: block; color: #888274; font-size: 11px; }
-.trace-background { margin-top: 18px; padding: 12px; background: #faf9f5; border-radius: 8px; font-size: 12px; }
-.trace-background summary, .trace-decision summary { cursor: pointer; font-size: 12px; }
-.trace-decision > strong { font-size: 13px; }
-.trace-decision blockquote { margin: 10px 0; padding: 8px 12px; border-left: 2px solid #d7c788; white-space: pre-wrap; font-size: 12px; }
-.trace-save { color: #6b5d2d; }
-.trace-save a { margin-left: 12px; text-decoration: underline; }
-@media (max-width: 700px) { .trace-phases { grid-template-columns: repeat(2, minmax(0, 1fr)); } .run-trace { padding: 14px; } }

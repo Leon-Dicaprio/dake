@@ -76,9 +76,7 @@ def apply_attributions(candidates, *, store, events, visible_events, available, 
     plans = []
     for candidate in candidates:
         original = candidate
-        matching = None
-        if settings.group_matching_enabled:
-            candidate, matching = constrain(candidate, retrieval=retrieval, available=available, eligible=eligible)
+        candidate, matching = constrain(candidate, retrieval=retrieval, available=available, eligible=eligible)
         if any(key not in new_keys for key in candidate.evidence_ids):
             raise ContractError("明确归属的写入证据只能来自本批新增或变更消息，旧背景须放在 basis")
         validate_changes(candidate, available, human_keys)
@@ -89,10 +87,9 @@ def apply_attributions(candidates, *, store, events, visible_events, available, 
                         closed_statuses=settings.closed_statuses)
         record.update(kind="event_attribution", window_start=result.window.start.isoformat(),
                       window_end=result.window.end.isoformat(), requested_action=original.decision)
-        if matching is not None:
-            record["program_matching"] = matching
-            if record["action"] == "duplicate":
-                record.update(business_classification="non_business", processing_action="no_action")
+        record["program_matching"] = matching
+        if record["action"] == "duplicate":
+            record.update(business_classification="non_business", processing_action="no_action")
         if recorder is not None:
             record.update(attempt_id=recorder.attempt_id, proposal_id=recorder.proposals[id(original)])
         plans.append((candidate, record))
@@ -164,7 +161,7 @@ def apply_attributions(candidates, *, store, events, visible_events, available, 
                 record.update(revision_no=revision.get("revision_no") if revision else None,
                               summary_changed=revision.get("summary_changed", False) if revision else False,
                               change_kind=revision.get("change_kind") if revision else "no_change")
-            if settings.group_matching_enabled and action == "update" and updated is None:
+            if action == "update" and updated is None:
                 record.update(business_classification="non_business", processing_action="no_action")
             observe("decision", candidate=asdict(candidate), action=action, event_id=record["event_id"],
                     possible_event_ids=record["possible_event_ids"], reason=record["reason"],

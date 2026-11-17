@@ -16,7 +16,8 @@ from dake.jobs.runner import RunRunner, prepare_request
 from dake.repositories.runs import RunConflict, RunRepository
 from dake.services.processing import IncrementalService
 from dake.services.queries import QueryService
-from fakes import FakeProvider, FakeSource, MemoryStore
+from fakes import FakeSource
+from execution_fakes import MemoryAttempts, RecordingStore
 
 
 class MemoryRuns:
@@ -32,7 +33,7 @@ class MemoryRuns:
             raise RunConflict()
         item = dict(run_id=str(uuid4()), uid=request["uid"], mode=request["mode"], request=deepcopy(request),
                     status="queued", completed_windows=0, total_windows=total, cycles=[],
-                    current_window=None, current_baseline=None, recovered_by=None, error=None)
+                    current_window=None, recovered_by=None, error=None)
         self.items[item["run_id"]] = item
         return deepcopy(item)
 
@@ -42,10 +43,10 @@ class MemoryRuns:
             item.update(status="running", runner_id=runner_id)
             return deepcopy(item)
 
-    def begin_window(self, run_id, runner_id, window, baseline):
+    def begin_window(self, run_id, runner_id, window):
         item = self.items[run_id]
         assert item["runner_id"] == runner_id and item["status"] == "running"
-        item.update(current_window=deepcopy(window), current_baseline=deepcopy(baseline))
+        item.update(current_window=deepcopy(window))
 
     def complete_window(self, run_id, runner_id, cycle):
         if self.fail_completion_once:
@@ -55,7 +56,7 @@ class MemoryRuns:
         assert item["runner_id"] == runner_id and item["status"] == "running"
         item["cycles"].append(deepcopy(cycle))
         item["completed_windows"] += 1
-        item.update(current_window=None, current_baseline=None)
+        item.update(current_window=None)
 
     def finish(self, run_id, runner_id, error=None):
         item = self.items[run_id]
@@ -75,18 +76,20 @@ def run_fixture(tmp_path, *, days=2):
     uid = "synthetic-run-customer"
     settings = replace(Settings(), uid=uid, data_dir=tmp_path, start=bound("2026-11-08"),
                        end=bound("2026-11-08") + timedelta(days=days), interval=timedelta(days=1))
-    messages = [Message(uid, "1", bound("2026-11-08T09:00:00"), "合成运行消息一"),
-                Message(uid, "2", bound("2026-11-09T09:00:00"), "合成运行消息二")]
+    messages = [Message(uid, "1", bound("2026-11-08T09:00:00"), "合成运行消息一", conversation_id="synthetic-run-room"),
+                Message(uid, "2", bound("2026-11-09T09:00:00"), "合成运行消息二", conversation_id="synthetic-run-room")]
     source = FakeSource(messages)
-    provider = FakeProvider({"1": Candidate("排障", "synthetic-topic", "合成首日进展", ["1"]),
-                             "2": Candidate("排障", "synthetic-topic", "合成次日进展", ["2"])})
-    store, repository = MemoryStore(), MemoryRuns()
+    from test_attribution import candidate as attributed, AttributionProvider
+    provider = AttributionProvider({"1": attributed(messages[0]),
+        "2": lambda new, context, events: attributed(messages[1], "update", events[0].event_id, [messages[0]])})
+    attempts, repository = MemoryAttempts(), MemoryRuns()
+    store = RecordingStore(attempts)
     seen_settings = []
 
     @contextmanager
     def service_factory(configuration, **kwargs):
         seen_settings.append(configuration)
-        yield IncrementalService(store, source, provider, configuration)
+        yield IncrementalService(store, source, provider, configuration, attempts=attempts)
 
     runner = RunRunner(settings, repository, service_factory=service_factory)
     request, total = prepare_request(settings, {"mode": "official", "interval": "1d"})
@@ -121,6 +124,7 @@ def test_run_saves_each_cycle_and_repeated_run_has_zero_increment(tmp_path):
     assert repeated["status"] == "succeeded"
     assert all(not cycle["created"] and not cycle["updated"] and cycle["processed"] == 0 for cycle in repeated["cycles"])
     assert len(store.events) == 1
+    assert not (tmp_path / "run-results").exists()
 
 
 def test_failure_preserves_completed_cycles_and_sanitizes_error(tmp_path):
@@ -132,21 +136,25 @@ def test_failure_preserves_completed_cycles_and_sanitizes_error(tmp_path):
     assert "missing-id" not in run["error"] and "合成错误" not in run["error"]
 
 
-def test_progress_write_failure_restores_committed_cycle_and_fresh_late_changes(tmp_path):
+def test_progress_recovery_preserves_receipt_and_processes_late_messages_in_next_run(tmp_path):
     _, repository, runner, store, source, provider, request, total, _ = run_fixture(tmp_path, days=1)
     repository.fail_completion_once = True
     failed = execute_next(repository, runner, request, total)
     assert failed["status"] == "failed" and failed["completed_windows"] == 0
     original_event = next(iter(store.events))
-    late = Message(request["uid"], "3", bound("2026-11-08T10:00:00"), "合成迟到的另一事件")
+    late = Message(request["uid"], "3", bound("2026-11-08T10:00:00"), "合成迟到的另一事件", conversation_id="synthetic-run-room")
     source.messages.append(late)
-    provider.mapping["3"] = Candidate("商务需求", "synthetic-invoice", "合成商务需求", ["3"])
+    from test_attribution import candidate as attributed
+    provider.mapping["3"] = attributed(late, type="商务需求", topic_key="synthetic-invoice")
     retried = execute_next(repository, runner, request, total)
     cycle = retried["cycles"][0]
     assert retried["status"] == "succeeded" and cycle["recovered_from_history"] is True
-    assert original_event in cycle["created"] and len(cycle["created"]) == 2
-    assert cycle["processed"] == 2 and len(store.events) == 2
+    assert cycle["created"] == [original_event] and cycle["recovered_from_attempt_id"]
+    assert cycle["processed"] == 1 and len(store.events) == len(provider.calls) == 1
     assert failed["recovered_by"] == retried["run_id"]
+    fresh = execute_next(repository, runner, request, total)
+    assert fresh["cycles"][0]["processed"] == 1 and len(fresh["cycles"][0]["created"]) == 1
+    assert len(store.events) == len(provider.calls) == 2
     repeated = execute_next(repository, runner, request, total)
     assert repeated["cycles"][0]["created"] == [] and repeated["cycles"][0]["processed"] == 0
 
@@ -166,7 +174,7 @@ def test_scheduled_window_keeps_original_business_start_for_late_messages(tmp_pa
     assert len(store.events) == len(provider.calls) == 1
 
 
-def test_loss_of_worker_lock_after_commit_is_failed_and_recoverable(tmp_path):
+def test_loss_of_worker_lock_after_commit_keeps_data_without_reanalysis(tmp_path):
     _, repository, runner, store, _, _, request, total, _ = run_fixture(tmp_path, days=1)
 
     class LostLock:
@@ -183,8 +191,9 @@ def test_loss_of_worker_lock_after_commit_is_failed_and_recoverable(tmp_path):
     runner._keeper = None
     retried = execute_next(repository, runner, request, total)
     cycle = retried["cycles"][0]
-    assert cycle["recovered_from_history"] is True and cycle["counts_complete"] is False
-    assert len(cycle["created"]) == 1 and len(store.events) == 1
+    assert cycle["processed"] == 1 and cycle["recovered_from_attempt_id"]
+    assert failed["recovered_by"] == retried["run_id"]
+    assert len(store.events) == 1 and cycle["created"] == list(store.events)
 
 
 def test_queued_run_uses_frozen_rules_after_configuration_changes(tmp_path):
@@ -223,7 +232,7 @@ def test_mysql_run_repository_keeps_progress_and_rejects_duplicate_customer(pers
     with repository.connection() as store:
         store._execute("UPDATE processing_runs SET status='running',runner_id=%s WHERE run_id=%s", (owner, run["run_id"]))
     window = {"start": request["start"], "end": bound("2026-11-09").isoformat()}
-    repository.begin_window(run["run_id"], owner, window, {})
+    repository.begin_window(run["run_id"], owner, window)
     cycle = dict(uid=uid, stream="stub-v1", window=window, processed=0, ingested=0,
                  created=[], updated=[], review=[], events=[], watermark={})
     repository.complete_window(run["run_id"], owner, cycle)
@@ -337,9 +346,19 @@ def test_begin_same_window_zero_affected_rows_checks_ownership(still_owned):
             yield Connection()
     repo = Repository(Settings())
     if still_owned:
-        repo.begin_window("synthetic-run", "synthetic-owner", dict(start="synthetic-start", end="synthetic-end"), {})
+        repo.begin_window("synthetic-run", "synthetic-owner", dict(start="synthetic-start", end="synthetic-end"))
     else:
         with pytest.raises(StorageError):
-            repo.begin_window("synthetic-run", "synthetic-owner", {}, {})
+            repo.begin_window("synthetic-run", "synthetic-owner", {})
     assert calls[1][1] == ("synthetic-run", "synthetic-owner")
     assert "status='running' AND runner_id=%s" in calls[1][0]
+
+
+@pytest.mark.parametrize("version", [None, "conversation-matching-v2-old"])
+def test_old_task_policy_stops_before_service_creation(tmp_path, version):
+    _, repository, runner, store, _, _, request, total, seen = run_fixture(tmp_path)
+    request["group_matching_version"] = version
+    result = execute_next(repository, runner, request, total)
+    assert result["status"] == "failed" and result["completed_windows"] == 0
+    assert "策略已变化" in result["error"]
+    assert not seen and not store.messages and not store.events

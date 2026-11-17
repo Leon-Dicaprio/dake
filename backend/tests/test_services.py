@@ -7,7 +7,7 @@ import pytest
 
 from dake.bootstrap import build_service
 from dake.config import PROJECT_ROOT, Settings, bound
-from dake.domain.models import Candidate, Message
+from dake.domain.models import Message
 from dake.services.processing import IncrementalService
 from dake.services.replay import ReplayService
 from fakes import FakeProvider, FakeSource, MemoryStore
@@ -16,10 +16,11 @@ from fakes import FakeProvider, FakeSource, MemoryStore
 def make_service(tmp_path):
     uid = "synthetic-service-customer"
     settings = replace(Settings(), uid=uid, data_dir=tmp_path, end=bound("2026-11-09"))
-    messages = [Message(uid, "301", bound("2026-11-08T00:02:00"), "合成第一轮消息"),
-                Message(uid, "302", bound("2026-11-08T00:17:00"), "合成第二轮消息")]
-    provider = FakeProvider({m.message_id: Candidate("排障", "synthetic-topic", m.content, [m.message_id])
-                             for m in messages})
+    messages = [Message(uid, "301", bound("2026-11-08T00:02:00"), "合成第一轮消息", conversation_id="synthetic-service-room"),
+                Message(uid, "302", bound("2026-11-08T00:17:00"), "合成第二轮消息", conversation_id="synthetic-service-room")]
+    from test_attribution import candidate as attributed, AttributionProvider
+    provider = AttributionProvider({"301": attributed(messages[0]),
+        "302": lambda new, context, events: attributed(messages[1], "update", events[0].event_id, [messages[0]])})
     service = IncrementalService(MemoryStore(), FakeSource(messages), provider, settings)
     return service, ReplayService(service)
 
