@@ -43,6 +43,7 @@ docker compose ps
 docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" exec mysql --user="$MYSQL_USER" "$MYSQL_DATABASE"' < backend/migrations/001_processing_attempts.sql
 docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" exec mysql --user="$MYSQL_USER" "$MYSQL_DATABASE"' < backend/migrations/002_event_link_hints.sql
 docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" exec mysql --user="$MYSQL_USER" "$MYSQL_DATABASE"' < backend/migrations/003_customer_directory.sql
+docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" exec mysql --user="$MYSQL_USER" "$MYSQL_DATABASE"' < backend/migrations/006_event_group_links.sql
 ```
 
 MySQL 8.4 仅监听 `127.0.0.1:3307`，数据库默认 `dake_aftersales`，应用用户默认 `dake`。数据保存在 `data/mysql/`。健康检查使用应用账号执行查询，启动完成后应显示 `healthy`。
@@ -52,6 +53,24 @@ MySQL 8.4 仅监听 `127.0.0.1:3307`，数据库默认 `dake_aftersales`，应�
 `002_event_link_hints.sql` 为变化面板增加自动生成的轻量事件引用提示列，已有阶段和收据保持原样。每个库只执行一次；执行前可用 `SHOW COLUMNS FROM processing_attempts LIKE 'event_link_hints'` 确认是否已迁移。迁移会计算存量记录并可能锁表，应在无执行中任务的维护时段运行。未迁移时查询兼容原扫描方式，但性能较慢；应用启动及 GET 查询不会隐式迁移。
 
 `docker compose stop mysql` 可停止数据库；再次运行启动命令会使用原有数据。初始化账号和密码只在空数据目录首次启动时生效，修改 `.env` 不会自动修改已有数据库密码。
+
+## Windows 本机启动
+
+使用 Windows Python 3.11+、Node.js 24 和已启动的 Docker Desktop（Linux 容器）。项目放在 Windows 磁盘目录；不要复制 Linux 的 `.venv`、`node_modules` 或 MySQL 数据目录。
+
+在项目根目录的 PowerShell 执行：
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r backend/requirements.lock
+.\.venv\Scripts\python.exe -m pip install -e ./backend --no-deps
+npm.cmd --prefix web ci
+powershell -ExecutionPolicy Bypass -File scripts/start-windows.ps1 -Initialize
+```
+
+首次启动前准备根 `.env`；使用独立的本地数据库和新密码。`-Initialize` 只接受没有任何表的空库，显式执行建表及迁移，不删除数据、不创建任务、不调用外部接口。后续启动去掉 `-Initialize`。脚本打开前后端两个窗口，页面为 <http://localhost:8000>；关闭窗口即可停止对应服务。切换前先停止旧 WSL 前后端和 MySQL，避免占用 8000、8001、3307。
+
+文件锁支持 Linux 和 Windows，时区由 `tzdata` 提供。Windows 私有配置及 `data/` 的访问权限由目录 ACL 控制，应限定当前用户；POSIX 的 0600 权限数字不能替代 Windows ACL。迁移系统不代表数据库高频短连接问题已经解决，持续运行仍需单独验证。
 
 ## 网页与接口
 
@@ -265,7 +284,7 @@ npm run openapi
 
 保存新配置不会启动任务；自动任务需点击启用。暂停在当前窗口完成后生效。后台服务存活期间无需保持网页打开；配置、游标、当次配置快照与执行结果保存到 MySQL，重启后继续读取。失败客户依据数据库待处理消息从未成功窗口续跑，其他客户继续推进；已有后续事件时，迟到消息放入当前窗口处理。提交结果未核实的客户跨定时执行保留失败状态，不能自动重新发送模型请求。数据库新增表由 `004_task_center.sql` 在服务启动时幂等创建。运行状态与官方事件状态独立。
 
-任务中心分析已同步聊天时，会按客户范围排除不符合条件的客户，并批量跳过没有待处理消息的连续窗口。跳过结果在逐轮记录中明确标记，不创建模型分析尝试或事件快照；有消息的窗口仍保持原时间边界。迟到消息、未核实提交以及历史中断恢复范围不走该快速路径。实时取数阶段不能依据本地消息为空而跳过官方接口。
+任务中心分析已同步聊天时，会按客户范围排除不符合条件的客户。严格客户流水线的空窗口也通过事务收据推进处理水位，跳过模型调用；非严格回放保留连续空窗口快速跳过。迟到消息、未核实提交以及历史中断恢复范围不走快速跳过路径。实时取数阶段不能依据本地消息为空而跳过官方接口。
 
 Linux / WSL 可用用户服务保持本地后端运行：先执行 `.venv/bin/python scripts/install_local_backend_service.py` 注册，再退出此前手动启动的后端，执行 `systemctl --user start dake-aftersales-backend`。服务异常退出后自动重启。通过 `systemctl --user status dake-aftersales-backend` 查看状态，`systemctl --user stop dake-aftersales-backend` 停止。系统或 WSL 关闭期间无法运行，重新启动后从持久进度继续。
 

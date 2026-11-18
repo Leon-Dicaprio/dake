@@ -1,0 +1,6 @@
+# Windows 检出后沿用前端格式检查要求的 LF 换行。
+*.ts text eol=lf
+*.tsx text eol=lf
+*.css text eol=lf
+*.json text eol=lf
+*.mts text eol=lf

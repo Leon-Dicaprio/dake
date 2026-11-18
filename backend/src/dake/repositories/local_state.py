@@ -1,7 +1,7 @@
 """可恢复的本地水位与私有快照；是否已处理以 MySQL 事务内的消息标记为准。"""
 
 import hashlib
-import fcntl
+import portalocker
 import json
 import os
 from pathlib import Path
@@ -11,7 +11,7 @@ from ..domain.models import json_value, parse_time
 
 
 def private_json(path: Path, value: dict):
-    """用权限 0600 的临时文件原子替换，避免半写文件或正文被其他用户读取。"""
+    """私有临时文件原子替换；POSIX 使用 0600，Windows 继承私有目录 ACL。"""
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, name = tempfile.mkstemp(dir=path.parent, prefix=".write-", suffix=".tmp")
     try:
@@ -51,7 +51,7 @@ class LocalState:
         path = self.data_dir / "state" / (self.key(uid, stream) + ".lock")
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with path.open("a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+            portalocker.lock(lock, portalocker.LOCK_EX)
             previous = self.read(uid, stream)
             if not previous.get("next_start") or parse_time(previous["next_start"]) <= parse_time(value["next_start"]):
                 self.write(uid, stream, value)

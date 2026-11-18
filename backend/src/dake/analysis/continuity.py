@@ -50,7 +50,7 @@ def normalize_uncertain_reference(candidate, existing_events):
             or not fact or fact.get("kind") != "uncertain"):
         return []
     previous = fact.get("previous_event_id")
-    if not previous or not any(e.event_id == previous and e.type == candidate.type for e in existing_events):
+    if not previous or not any(e.event_id == previous for e in existing_events):
         return []
     candidate.possible_event_ids = list(dict.fromkeys([*candidate.possible_event_ids, previous]))
     fact["previous_event_id"] = None

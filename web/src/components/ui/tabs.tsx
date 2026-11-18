@@ -22,7 +22,7 @@ export function TabsTrigger({
   return (
     <Primitive.Trigger
       className={cn(
-        'border-b-2 border-transparent px-1 py-3 text-sm text-zinc-500 data-[state=active]:border-zinc-900 data-[state=active]:font-medium data-[state=active]:text-zinc-900',
+        'border-b-2 border-transparent px-1 py-2.5 text-sm text-zinc-600 hover:text-zinc-900 data-[state=active]:border-[var(--accent-edge)] data-[state=active]:font-semibold data-[state=active]:text-zinc-900',
         className,
       )}
       {...props}
@@ -33,10 +33,5 @@ export function TabsContent({
   className,
   ...props
 }: ComponentProps<typeof Primitive.Content>) {
-  return (
-    <Primitive.Content
-      className={cn('pt-6 outline-none', className)}
-      {...props}
-    />
-  );
+  return <Primitive.Content className={cn('pt-4', className)} {...props} />;
 }

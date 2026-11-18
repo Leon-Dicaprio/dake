@@ -68,10 +68,9 @@ class TaskService:
             paused = self.tasks.set_enabled(task_id, False)
             for execution in self.tasks.executions(task_id, active=True):
                 execution["state"]["plan_windows"] = False
-                for run_id in execution["state"].get("sync_run_ids", []):
-                    run = self.runs.get(run_id)
-                    if run and run["status"] == "queued":
-                        self.runs.cancel_queued(run_id)
+                for run in self._syncs(execution["state"]):
+                    if run["status"] == "queued":
+                        self.runs.cancel_queued(run["run_id"])
                 self.tasks.save_execution(execution)
             return paused
         if action == "resume":
@@ -124,8 +123,13 @@ class TaskService:
         cursors = dict(previous["state"].get("customer_cursors", {})) if previous else {}
         if previous:
             for child in previous["state"].get("children", []):
-                if child.get("cursor"):
-                    cursors[child["uid"]] = child["cursor"]
+                cursor = child.get("cursor")
+                run = self.runs.get(child["run_id"]) if child.get("run_id") else None
+                # 来源可能先失败，已成功的分析子任务尚未来得及汇总到客户进度。
+                if run and run["status"] == "succeeded":
+                    cursor = run["request"]["end"]
+                if cursor:
+                    cursors[child["uid"]] = cursor
         state = dict(config=config, version=task["version"], frozen_uids=task["frozen_uids"], origin=origin.isoformat(),
             start=start.isoformat(), end=end.isoformat(), template=template, sync_run_id=None,
             window_start=start.isoformat(), window_end=min(start + duration(config["interval"]), end).isoformat(),
@@ -191,7 +195,7 @@ class TaskService:
             state["end"] = horizon.isoformat()
 
     def _syncs(self, state):
-        return [item for rid in state.get("sync_run_ids", []) if (item := self.runs.get(rid))]
+        return self.runs.progress_rows(state.get("sync_run_ids", [])).values()
 
     def _settle_source(self, execution):
         """成功的抓取才发布水位；失败按任务重试，不把缺口当成已覆盖。"""
@@ -291,6 +295,7 @@ class TaskService:
                 child["status"] = "queued"
                 continue
             window_end = min(cursor + interval, limit)
+            # 空窗口也通过事务回执推进客户水位，业务服务会跳过模型调用。
             child["run_id"] = str(uuid4())
             child.setdefault("run_ids", []).append(child["run_id"])
             phase = "live" if cursor >= bound(child.get("catchup_target") or state["end"]) else "catchup"
@@ -417,6 +422,8 @@ class TaskService:
         state = execution["state"]
         customers, created, updated, processed = [], set(), set(), 0
         waiting = []
+        run_ids = (rid for child in state["children"] for rid in child.get("run_ids") or [])
+        analysis_runs = self.runs.progress_rows(run_ids, include_cycles=True)
         for child in state["children"]:
             item = {k: child.get(k) for k in ("uid", "level", "status", "reason", "run_id")}
             item["run_id"] = child.get("run_id") or next(iter(reversed(child.get("run_ids") or [])), None)
@@ -427,7 +434,7 @@ class TaskService:
                 analyzed_until=child.get("cursor"), duration_seconds=None)
             own_created, own_updated = set(), set()
             for run_id in child.get("run_ids") or []:
-                run = self.runs.get(run_id)
+                run = analysis_runs.get(run_id)
                 if not run:
                     continue
                 item["completed_windows"] += run["completed_windows"]

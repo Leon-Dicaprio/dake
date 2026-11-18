@@ -39,11 +39,15 @@ class TestQueries:
                     event_types=list(EVENT_TYPES), provider="stub", customers=[dict(uid=TEST_UID,
                     label="合成测试客户", message_count=1, event_count=1, stream=TEST_STREAM)])
 
-    def events(self, uid=None, stream=None, event_type=None):
+    def events(self, uid=None, stream=None, event_type=None, *, status=None, priority=None):
         if uid != TEST_UID or stream != TEST_STREAM:
             return {"items": [], "total": 0}
         item = event_value()
         items = [item] if event_type is None or item["type"] == event_type else []
+        if status is not None:
+            items = [e for e in items if e.get("lifecycle_status") == status]
+        if priority is not None:
+            items = [e for e in items if e.get("priority") == priority]
         return {"items": items, "total": len(items)}
 
     def event(self, event_id, uid=None, stream=None):
@@ -120,7 +124,9 @@ def test_openapi_has_named_operations_and_typed_models(api):
     client, _, _, _ = api
     schema = client.get("/openapi.json").json()
     operations = {item["operationId"] for path in schema["paths"].values() for item in path.values()}
-    assert operations == {"health", "get_config", "list_events", "get_event", "get_event_changes", "list_runs", "get_run", "list_customer_profiles", "list_customer_groups",
+    assert operations == {"health", "get_config", "list_events", "get_event", "get_event_context", "get_event_changes",
+                          "submit_manual_decision", "get_manual_decision",
+                          "list_runs", "get_run", "list_customer_profiles", "list_customer_groups",
                           "create_customer_sync", "list_customer_syncs", "get_customer_sync", "list_tasks", "create_task",
                           "preview_task", "update_task", "task_action", "list_task_executions", "get_task_execution",
                           "list_sender_rules", "search_sender_candidates", "save_sender_rule"}

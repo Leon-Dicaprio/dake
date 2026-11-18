@@ -78,14 +78,14 @@ export default function TasksPage() {
   const task =
     items.find((t) => t.task_id === params.get('task')) || visible[0];
   const history = useResource(
-    task ? `task-history:${task.task_id}` : null,
+    task && tab === 'history' ? `task-history:${task.task_id}` : null,
     (signal) => api.taskExecutions(task?.task_id || '', signal),
     4000,
   );
   const executionId =
     params.get('execution') || task?.latest?.execution_id || '';
   const detail = useResource(
-    task && executionId
+    task && executionId && tab === 'progress'
       ? `task-execution:${task.task_id}:${executionId}`
       : null,
     (signal) => api.taskExecution(executionId, signal),
@@ -119,10 +119,18 @@ export default function TasksPage() {
     <main className="page task-page">
       <header className="page-header">
         <div>
-          <h1>
-            任务中心 <span className="task-title-count">{items.length}</span>
-          </h1>
-          <p>配置处理范围，查看每一次执行的进度与结果。</p>
+          <h1>任务中心</h1>
+          {tasks.data && (
+            <p>
+              共 {items.length} 个任务 ·{' '}
+              {
+                items.filter(
+                  (item) => item.config.mode === 'automatic' && item.enabled,
+                ).length
+              }{' '}
+              个自动任务已启用
+            </p>
+          )}
         </div>
         <div className="page-header-actions">
           <Button variant="primary" onClick={() => setForm('new')}>
@@ -211,11 +219,7 @@ export default function TasksPage() {
               </div>
             )}
           </div>
-          <div className="task-list-footer">
-            <span className="task-enabled on" />
-            {items.filter((t) => t.enabled).length} 个自动任务已启用
-            <span>每 4 秒刷新</span>
-          </div>
+          <div className="task-list-footer">任务列表每 4 秒刷新</div>
         </aside>
         <section className="task-detail" aria-label="任务详情">
           {task ? (
@@ -292,14 +296,19 @@ export default function TasksPage() {
                   <TabsTrigger value="history">执行记录</TabsTrigger>
                 </TabsList>
                 <TabsContent value="progress">
-                  {detail.error ? (
+                  {detail.error && (
                     <ErrorNotice
-                      message={detail.error}
+                      message={
+                        execution
+                          ? `刷新进度失败，当前显示上次结果。${detail.error}`
+                          : detail.error
+                      }
                       retry={detail.refresh}
                     />
-                  ) : execution ? (
+                  )}
+                  {execution ? (
                     <ExecutionProgress execution={execution} />
-                  ) : executionId && detail.loading ? (
+                  ) : detail.error ? null : executionId && detail.loading ? (
                     <LoadingRows />
                   ) : (
                     <EmptyState
@@ -422,7 +431,7 @@ function ExecutionProgress({
   const discovery = e.stage === 'discovery';
   const current = discovery ? e.sync_completed : completed;
   const total = discovery ? e.sync_total : included.length;
-  const percent = total ? Math.round((current / total) * 100) : 0;
+  const percent = total ? Math.round((current / total) * 100) : null;
   return (
     <div className="task-execution">
       <div className="task-execution-heading">
@@ -440,19 +449,60 @@ function ExecutionProgress({
         <span className="task-muted">开始于 {formatTime(e.created_at)}</span>
       </div>
       {e.error && <ErrorNotice message={e.error} />}
-      <div className="task-phases">
+      <section
+        className="task-progress-band"
+        aria-label={discovery ? '同步消息窗口' : '客户处理进度'}
+      >
+        <div className="task-progress-number">
+          <span>{discovery ? '同步消息窗口' : '客户处理进度'}</span>
+          <strong>
+            {percent === null ? (
+              '—'
+            ) : (
+              <>
+                {percent}
+                <small>%</small>
+              </>
+            )}
+          </strong>
+        </div>
+        <div className="task-progress-track">
+          <div className="task-progress-label">
+            <strong>
+              {current} / {total} {discovery ? '个窗口' : '位客户'}
+            </strong>
+            <span>
+              {finished
+                ? '本次执行已结束'
+                : total
+                  ? '进度自动更新'
+                  : '正在准备本次执行范围'}
+            </span>
+          </div>
+          <progress
+            className="task-progress"
+            aria-label="本次执行进度"
+            value={current}
+            max={Math.max(1, total)}
+          />
+        </div>
+      </section>
+      <ol className="task-phases" aria-label="执行阶段">
         {[
           ['取数', e.phases?.fetch],
           ['客户识别', e.phases?.discovery],
           ['分析', e.phases?.analysis],
-        ].map(([label, phase]) => (
-          <div
+        ].map(([label, phase], index) => (
+          <li
             key={label}
+            aria-current={phase === 'running' ? 'step' : undefined}
             className={
               phase === 'running' ? 'current' : phase === 'done' ? 'done' : ''
             }
           >
-            <span>{phase === 'done' ? <Check size={14} /> : ''}</span>
+            <span className="task-phase-index" aria-hidden="true">
+              {phase === 'done' ? <Check size={13} /> : index + 1}
+            </span>
             <strong>{label}</strong>
             <small>
               {phase === 'running'
@@ -461,36 +511,24 @@ function ExecutionProgress({
                   ? '已有进展'
                   : '等待'}
             </small>
-          </div>
+          </li>
         ))}
-      </div>
-      <p className="task-muted">{e.capacity_notice}</p>
-      <div className="task-progress-label">
-        <strong>{discovery ? '同步消息窗口' : '客户处理进度'}</strong>
-        <span>
-          {current} / {total}
-          {discovery ? ' 个窗口' : ' 位客户'}
-        </span>
-      </div>
-      <progress
-        className="task-progress"
-        aria-label="本次执行进度"
-        value={current}
-        max={Math.max(1, total)}
-      />
+      </ol>
       <p className="task-muted">
-        {finished
-          ? e.status === 'succeeded'
-            ? '本次处理已结束，结果已保存。'
-            : '本次执行已结束，请查看未完成项与原因。'
-          : total
-            ? `${percent}% · 进度自动更新`
-            : '正在准备本次执行范围'}
-        {e.source_errors > 0 && ` · ${e.source_errors} 次资料或群归属待确认`}
-        {e.oldest_wait_seconds != null &&
-          ` · 最早排队 ${e.oldest_wait_seconds} 秒`}
+        {[
+          e.capacity_notice,
+          finished &&
+            (e.status === 'succeeded'
+              ? '结果已保存。'
+              : '请查看未完成项与原因。'),
+          e.source_errors > 0 && `${e.source_errors} 次资料或群归属待确认`,
+          e.oldest_wait_seconds != null &&
+            `最早排队 ${e.oldest_wait_seconds} 秒`,
+        ]
+          .filter(Boolean)
+          .join(' · ')}
       </p>
-      <div className="task-metrics">
+      <dl className="task-metrics" aria-label="本次执行统计">
         {[
           ['匹配客户', included.length],
           ['处理消息', e.processed],
@@ -501,11 +539,11 @@ function ExecutionProgress({
           ['更新事件', e.updated_events],
         ].map(([label, value]) => (
           <div key={label}>
-            <span>{label}</span>
-            <strong>{value}</strong>
+            <dt>{label}</dt>
+            <dd>{value}</dd>
           </div>
         ))}
-      </div>
+      </dl>
       <div className="task-section-heading">
         <h3>客户执行明细</h3>
         <span>共 {included.length} 位参与处理</span>

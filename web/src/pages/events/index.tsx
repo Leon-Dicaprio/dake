@@ -1,15 +1,22 @@
-import { ChevronDown, Crown, Play, Search } from 'lucide-react';
+import { Activity, AlertTriangle, Crown, Search } from 'lucide-react';
 import { useEffect, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'umi';
-import { eventTypeClass } from '@/components/EventType';
+import {
+  compareEventsByPriority,
+  PriorityBadge,
+  StatusBadge,
+} from '@/components/EventBadges';
+import { eventDisplayLabels } from '@/components/EventType';
 import { EmptyState, ErrorNotice, LoadingRows } from '@/components/Feedback';
 import { Button } from '@/components/ui/button';
 import { useWorkspace } from '@/layouts/Workspace';
+import { savedEventScopes } from '@/lib/customerEvents';
 import { useResource } from '@/lib/useResource';
 import { formatTime } from '@/lib/utils';
 import { api } from '@/services/api';
 import { CustomerSwitcher, customerTierBadge } from './CustomerSwitcher';
 import { EventChangesDrawer } from './EventChangesDrawer';
+import { EventListFilters } from './EventListFilters';
 import { EventPane } from './EventPane';
 import { EventTimeFilter, timeRanges } from './EventTimeFilter';
 import { inMessageRange } from './eventTimeRange';
@@ -57,10 +64,10 @@ export default function EventsPage() {
             event_count: 0,
           }
         : undefined);
-  const stream = isAllCustomers
-    ? ''
-    : params.get('stream') || customer?.stream || '';
+  const stream = isAllCustomers ? '' : params.get('stream') || '';
   const type = params.get('type') || '';
+  const statusFilter = params.get('status') || '';
+  const priorityFilter = params.get('priority') || '';
   const search = params.get('q') || '';
   const group = (params.get('group') || '').split(',')[0].trim();
   const range = timeRanges.find((item) => item.value === params.get('range'));
@@ -71,34 +78,40 @@ export default function EventsPage() {
     Boolean(startDate && endDate && startDate > endDate);
   const eventId = params.get('event') || '';
   const dismissed = useRef(false);
-  const targetCustomers = useMemo(
-    () =>
-      (workspace.data?.customers || []).filter(
-        (item) => item.event_count === undefined || item.event_count > 0,
-      ),
-    [workspace.data?.customers],
-  );
-  const eventsKey = isAllCustomers
-    ? workspace.data
-      ? `events:all:${type}:${targetCustomers.map((item) => `${item.uid}:${item.stream}`).join(',')}`
-      : null
-    : customer
-      ? `events:${uid}:${stream}:${type}`
+  const scopes = useMemo(() => {
+    if (isAllCustomers)
+      return (workspace.data?.customers || []).flatMap(savedEventScopes);
+    const scopedCustomer = customerMap.get(uid);
+    if (stream || !scopedCustomer) return [{ uid, stream }];
+    return savedEventScopes(scopedCustomer);
+  }, [isAllCustomers, workspace.data?.customers, customerMap, uid, stream]);
+  const eventsKey =
+    workspace.data && (isAllCustomers || customer)
+      ? JSON.stringify([
+          'events',
+          uid,
+          scopes,
+          type,
+          statusFilter,
+          priorityFilter,
+        ])
       : null;
   const events = useResource(
     eventsKey,
     async (signal) => {
-      if (!isAllCustomers) {
-        return api.events(uid, stream, type, signal);
-      }
       const results = await Promise.all(
-        targetCustomers.map((item) =>
-          api.events(item.uid, item.stream, type, signal),
+        scopes.map((item) =>
+          api.events(
+            item.uid,
+            item.stream,
+            type,
+            signal,
+            statusFilter,
+            priorityFilter,
+          ),
         ),
       );
-      const merged = results
-        .flatMap((result) => result.items)
-        .sort((left, right) => right.end_time.localeCompare(left.end_time));
+      const merged = results.flatMap((result) => result.items);
       return { items: merged, total: merged.length };
     },
     5000,
@@ -130,7 +143,7 @@ export default function EventsPage() {
       .filter((event) => {
         if (
           search &&
-          !`${eventTitle(event)} ${event.summary} ${event.event_id} ${event.uid}`
+          !`${eventTitle(event)} ${event.summary} ${event.event_id} ${event.uid} ${customerMap.get(event.uid)?.label || ''}`
             .toLowerCase()
             .includes(search.toLowerCase())
         )
@@ -152,7 +165,7 @@ export default function EventsPage() {
         }
         return true;
       })
-      .sort((left, right) => right.end_time.localeCompare(left.end_time));
+      .sort((left, right) => compareEventsByPriority(left, right, customerMap));
   }, [
     items,
     search,
@@ -163,6 +176,7 @@ export default function EventsPage() {
     startDate,
     endDate,
     invalidRange,
+    customerMap,
   ]);
 
   const selected = visible.find((event) => event.event_id === eventId);
@@ -172,12 +186,10 @@ export default function EventsPage() {
   const activeStream = isAllCustomers
     ? selected?.stream || customerMap.get(activeUid)?.stream || ''
     : stream;
-  const filtering = Boolean(type || group || range?.value);
-
-  function selectCustomer(nextUid: string, nextStream = '') {
+  function selectCustomer(nextUid: string) {
     update({
       uid: nextUid,
-      stream: nextStream,
+      stream: '',
       tier: '',
       event: '',
       group: '',
@@ -209,6 +221,8 @@ export default function EventsPage() {
     const onKey = (event: KeyboardEvent) => {
       if (
         event.key !== 'Escape' ||
+        event.defaultPrevented ||
+        event.repeat ||
         !params.get('event') ||
         document.querySelector('[role="dialog"]')
       )
@@ -222,61 +236,35 @@ export default function EventsPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [params, setParams]);
 
-  const filters =
-    items.length || filtering ? (
-      <div className="inbox-filters">
-        <label className="filter-select">
-          <span className="sr-only">事件类型</span>
-          <select
-            aria-label="事件类型"
-            value={type}
-            onChange={(event) =>
-              update({ type: event.target.value, event: '' })
-            }
-          >
-            <option value="">全部类型</option>
-            {(workspace.data?.event_types || []).map((item) => (
-              <option key={item} value={item}>
-                {item}
-              </option>
-            ))}
-          </select>
-          <ChevronDown size={14} />
-        </label>
-        <label className="filter-select filter-select-group">
-          <span className="sr-only">群聊</span>
-          <select
-            aria-label="群聊"
-            title={
-              groups.find((item) => item.id === group)?.name ||
-              (group ? undefined : '全部群聊')
-            }
-            value={group}
-            onChange={(event) =>
-              update({ group: event.target.value, event: '' })
-            }
-          >
-            <option value="">全部群聊</option>
-            {groups.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-              </option>
-            ))}
-          </select>
-          <ChevronDown size={14} />
-        </label>
-      </div>
-    ) : null;
+  const typeOptions =
+    workspace.data?.filter_event_types || workspace.data?.event_types || [];
+  const statusOptions = workspace.data?.lifecycle_statuses || [
+    '跟进中',
+    '等待中',
+    '已解决',
+    '已取消',
+    '状态未明',
+  ];
+  const priorityOptions = workspace.data?.priorities || [
+    'P0',
+    'P1',
+    'P2',
+    'P3',
+    '待评估',
+  ];
 
   return (
     <main className="page events-workspace">
       <header className="inbox-toolbar">
         <div className="inbox-toolbar-start">
-          <h1>
-            工作台
-            <span className="heading-count">{events.data?.total ?? '—'}</span>
-          </h1>
-
+          <h1>工作台</h1>
+          {anchor && (
+            <p>
+              最近关联消息 <time dateTime={anchor}>{formatTime(anchor)}</time>
+            </p>
+          )}
+        </div>
+        <div className="inbox-toolbar-actions">
           <EventTimeFilter
             key={`${uid}:${stream}`}
             mode={range?.value || ''}
@@ -285,8 +273,12 @@ export default function EventsPage() {
             anchor={anchor}
             onApply={update}
           />
-        </div>
-        <div className="inbox-toolbar-actions">
+          <Button asChild variant="ghost">
+            <Link to="/tasks">
+              <Activity size={15} />
+              任务中心
+            </Link>
+          </Button>
           <EventChangesDrawer
             key={JSON.stringify([
               selected?.uid || activeUid,
@@ -295,12 +287,6 @@ export default function EventsPage() {
             ])}
             event={selected}
           />
-          <Button variant="primary" asChild>
-            <Link to="/tasks">
-              <Play size={15} />
-              任务中心
-            </Link>
-          </Button>
         </div>
       </header>
 
@@ -317,21 +303,35 @@ export default function EventsPage() {
       <div className="inbox-split">
         <section className="inbox-list" aria-label="事件列表">
           <header className="event-list-tools">
+            <div className="event-list-heading">
+              <h2>
+                事件列表 <span>{events.data ? visible.length : '—'}</span>
+              </h2>
+              <EventListFilters
+                values={{
+                  type,
+                  status: statusFilter,
+                  priority: priorityFilter,
+                  group,
+                }}
+                types={typeOptions}
+                statuses={statusOptions}
+                priorities={priorityOptions}
+                groups={groups}
+                update={update}
+              />
+            </div>
             <CustomerSwitcher
               uid={uid}
               customers={workspace.data?.customers || []}
               current={customer}
               onSelect={selectCustomer}
             />
-            <h2>
-              事件列表 <span>{visible.length}</span>
-            </h2>
-            {filters}
             <label className="event-search">
               <Search size={15} />
               <input
                 aria-label="搜索事件"
-                placeholder="搜索事件"
+                placeholder="搜索事件或客户"
                 value={search}
                 onChange={(event) =>
                   update({ q: event.target.value, event: '' })
@@ -350,6 +350,7 @@ export default function EventsPage() {
                 const change = latestChange(event, anchorDay);
                 const eventCustomer = customerMap.get(event.uid);
                 const badge = customerTierBadge(eventCustomer);
+                const rowLabels = eventDisplayLabels(event);
                 return (
                   <li key={event.event_id}>
                     <button
@@ -358,29 +359,50 @@ export default function EventsPage() {
                       aria-current={active ? 'true' : undefined}
                       onClick={() => update({ event: event.event_id })}
                     >
-                      <span
-                        className={`event-row-dot ${eventTypeClass(event.type)}`}
-                      />
+                      <span className="event-row-meta">
+                        <span
+                          className="event-row-customer"
+                          title={`UID ${event.uid}`}
+                        >
+                          {isAllCustomers
+                            ? eventCustomer?.label || `客户 ${event.uid}`
+                            : rowLabels.join('、')}
+                        </span>
+                        <time dateTime={event.end_time}>
+                          {formatTime(event.end_time)}
+                        </time>
+                      </span>
                       <span className="event-row-title">
                         {eventTitle(event)}
                       </span>
                       <span className="event-row-preview">{event.summary}</span>
                       <span className="event-row-sub">
-                        <span className="type-tag">{event.type}</span>
-                        {isAllCustomers || badge ? (
+                        <PriorityBadge
+                          priority={event.priority}
+                          detail={event.priority_detail}
+                          compact
+                        />
+                        <StatusBadge status={event.lifecycle_status} compact />
+                        {isAllCustomers && (
+                          <span className="event-row-types">
+                            {rowLabels.join('、')}
+                          </span>
+                        )}
+                        {badge && (
+                          <span className={`event-customer-tag ${badge.kind}`}>
+                            {badge.kind === 'super' && <Crown size={11} />}
+                            {badge.short}
+                          </span>
+                        )}
+                        {event.review_flag ? (
                           <span
-                            className={`event-customer-tag ${badge?.kind || ''}`}
+                            className="review-tag"
+                            title={event.review_flag}
                           >
-                            {badge?.kind === 'super' && <Crown size={10} />}
-                            {badge ? `${badge.short}` : ''}
-                            {isAllCustomers
-                              ? `${badge ? ' · ' : ''}${event.uid}`
-                              : ''}
+                            <AlertTriangle size={10} />
+                            待核对
                           </span>
                         ) : null}
-                        <time dateTime={event.end_time}>
-                          {formatTime(event.end_time)}
-                        </time>
                         {change ? (
                           <span className="change-tag">{change}</span>
                         ) : null}
@@ -402,11 +424,16 @@ export default function EventsPage() {
               selected.uid,
               selected.stream,
               selected.event_id,
+              selected.version,
             ])}
             event={selected}
             customer={customerMap.get(selected.uid) || customer}
             isAllCustomers={isAllCustomers}
             onSelectCustomer={selectCustomer}
+            onEventUpdated={() => {
+              events.refresh();
+              workspace.refresh();
+            }}
           />
         ) : (
           <section className="inbox-chat">

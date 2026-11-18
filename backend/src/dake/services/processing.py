@@ -9,6 +9,7 @@ from ..analysis.validation import validate_candidates
 from ..config import REVIEW, Settings
 from ..domain.models import CycleResult, Window, message_order, parse_time
 from ..repositories.local_state import LocalState
+from ..repositories.mysql import StorageError
 from .ingestion import IngestionService, Source
 from .history_retrieval import HistoryRetriever
 from .history_context import HistoryContextService
@@ -33,6 +34,21 @@ class _WindowPlan:
 
     def record_attributions(self, pending, stream, records):
         self.attributions.append((pending, stream, records))
+
+
+def _load_customer_profile(store, uid: str) -> dict | None:
+    """只读读取已持久化的客户等级资料；缺少客户目录表或未同步时保守返回 None。"""
+    reader = getattr(store, "customer_profile", None)
+    if reader is not None:
+        return reader(uid)
+    executor = getattr(store, "_execute", None)
+    if executor is None:
+        return None
+    try:
+        rows, _ = executor("SELECT uid, level, level_state FROM customer_profiles WHERE uid=%s", (uid,))
+        return dict(rows[0]) if rows else None
+    except StorageError:
+        return None
 
 
 class IncrementalService:
@@ -200,6 +216,7 @@ class IncrementalService:
     def _analyze_batch(self, uid, window, pending, context, events, result, kinds, roles, observe, recorder, observer, plan):
         """分析一个群内批次；调用方保证消息和上下文范围。"""
         fingerprint = kinds_fingerprint(kinds)
+        customer_profile = _load_customer_profile(self.store, uid)
         bot_pending = [m for m in pending if sender_kind(m.to_dict(), kinds) == "bot"]
         bot_keys = {m.key for m in bot_pending}
         eligible = [m for m in pending if m.key not in bot_keys]
@@ -250,7 +267,7 @@ class IncrementalService:
                     preflight_attributions(accepted, events=events, visible_events=history.events,
                         available=available, pending=pending, eligible=eligible, background=background,
                         result=result, settings=self.settings, retrieval=history,
-                        customer_keys=customer_keys)
+                        customer_keys=customer_keys, customer_profile=customer_profile, sender_roles=roles)
                 configure_validator(validate_proposals)
             try:
                 candidates = self.provider.extract(eligible, auxiliary, history.events)
@@ -284,7 +301,7 @@ class IncrementalService:
             events = apply_attributions(candidates, store=plan, events=events,
                 visible_events=history.events, available=available, pending=pending, eligible=eligible,
                 background=background, result=result, settings=self.settings, retrieval=history, observe=observe,
-                customer_keys=customer_keys, recorder=recorder)
+                customer_keys=customer_keys, customer_profile=customer_profile, sender_roles=roles, recorder=recorder)
         return events
 
     def _require_same_input(self, uid, window, pending, withheld, baseline):

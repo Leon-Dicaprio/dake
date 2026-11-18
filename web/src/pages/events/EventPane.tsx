@@ -1,7 +1,11 @@
-import { Crown } from 'lucide-react';
-import { useRef, useState } from 'react';
-import { EventType } from '@/components/EventType';
+import { AlertTriangle, Crown, Lock, MessagesSquare } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ClassificationDetails } from '@/components/ClassificationDetails';
+import { PriorityBadge, StatusBadge } from '@/components/EventBadges';
+import { EventType, eventDisplayLabels } from '@/components/EventType';
+import { ManualDecisionDialog } from '@/components/ManualDecisionDialog';
 import { formatTime } from '@/lib/utils';
+import { api } from '@/services/api';
 import { ChatMessage } from './ChatMessage';
 import { customerTierBadge } from './CustomerSwitcher';
 import { ExpandableText } from './ExpandableText';
@@ -118,20 +122,51 @@ function GroupTags({
 type ThreadItem =
   | { kind: 'group'; key: string; name: string; platform: string }
   | { kind: 'date'; key: string; day: string; label: string }
-  | { kind: 'message'; item: API.EvidenceResponse };
+  | { kind: 'message'; item: API.EvidenceResponse; contextOnly?: boolean };
 
-function threadItems(event: API.EventResponse): ThreadItem[] {
-  const evidence = [...(event.evidence || [])].sort(
-    (left, right) => Date.parse(left.send_time) - Date.parse(right.send_time),
-  );
+function compareMessageOrder(
+  left: API.EvidenceResponse,
+  right: API.EvidenceResponse,
+) {
+  const diff = Date.parse(left.send_time) - Date.parse(right.send_time);
+  if (diff !== 0) return diff;
+  const leftNum = Number(left.message_id);
+  const rightNum = Number(right.message_id);
+  if (Number.isFinite(leftNum) && Number.isFinite(rightNum)) {
+    return leftNum - rightNum;
+  }
+  return left.message_id.localeCompare(right.message_id);
+}
+
+function threadItems(
+  event: API.EventResponse,
+  contextMessages?: API.ContextMessageResponse[],
+): ThreadItem[] {
+  const baseEvidence = event.evidence || [];
+  const seenKeys = new Set(baseEvidence.map(messageKey));
+  const merged: { item: API.EvidenceResponse; contextOnly: boolean }[] =
+    baseEvidence.map((item) => ({ item, contextOnly: false }));
+
+  if (contextMessages?.length) {
+    for (const ctx of contextMessages) {
+      const mKey = messageKey(ctx);
+      if (!seenKeys.has(mKey)) {
+        seenKeys.add(mKey);
+        merged.push({ item: ctx, contextOnly: !ctx.is_evidence });
+      }
+    }
+  }
+
+  merged.sort((left, right) => compareMessageOrder(left.item, right.item));
+
   const conversations = new Set(
-    evidence.map((item) => item.conversation_id).filter(Boolean),
+    merged.map(({ item }) => item.conversation_id).filter(Boolean),
   );
   const splitGroups = conversations.size > 1;
   const items: ThreadItem[] = [];
   let lastGroup: string | undefined;
   let lastDay = '';
-  for (const item of evidence) {
+  for (const { item, contextOnly } of merged) {
     const day = shanghaiDay(item.send_time);
     if (day !== lastDay) {
       items.push({
@@ -153,7 +188,7 @@ function threadItems(event: API.EventResponse): ThreadItem[] {
       });
       lastGroup = group;
     }
-    items.push({ kind: 'message', item });
+    items.push({ kind: 'message', item, contextOnly });
   }
   return items;
 }
@@ -170,15 +205,59 @@ export function EventPane({
   customer,
   isAllCustomers = false,
   onSelectCustomer,
+  onEventUpdated,
 }: {
   event: API.EventResponse;
   customer?: API.CustomerResponse;
   isAllCustomers?: boolean;
-  onSelectCustomer?: (uid: string, stream?: string) => void;
+  onSelectCustomer?: (uid: string) => void;
+  onEventUpdated?: (updated: API.EventResponse) => void;
 }) {
   const chat = useRef<HTMLOListElement>(null);
   const [focused, setFocused] = useState('');
+  const [showContext, setShowContext] = useState(false);
+  const [contextData, setContextData] =
+    useState<API.EventContextResponse | null>(null);
+  const [contextLoading, setContextLoading] = useState(false);
+  const [contextError, setContextError] = useState('');
+
+  useEffect(() => {
+    if (!showContext) return;
+    const controller = new AbortController();
+    setContextLoading(true);
+    setContextError('');
+    api
+      .eventContext(event.event_id, event.uid, event.stream, controller.signal)
+      .then((res) => {
+        if (!controller.signal.aborted) {
+          setContextData(res);
+          setContextLoading(false);
+        }
+      })
+      .catch((err) => {
+        if (!controller.signal.aborted) {
+          setContextError(
+            err instanceof Error ? err.message : '加载前后群消息失败',
+          );
+          setContextLoading(false);
+        }
+      });
+    return () => controller.abort();
+  }, [showContext, event.event_id, event.uid, event.stream]);
+
   const tierBadge = customerTierBadge(customer);
+  const labels = eventDisplayLabels(event);
+  const controls = event.manual_controls || {};
+  const priorityNote =
+    typeof event.priority_detail?.level_note === 'string'
+      ? event.priority_detail.level_note
+      : typeof event.priority_detail?.reason === 'string'
+        ? event.priority_detail.reason
+        : '';
+  const statusNote =
+    typeof event.status_detail?.reason === 'string'
+      ? event.status_detail.reason
+      : '';
   function locate(key: string) {
     const row = Array.from(
       chat.current?.querySelectorAll<HTMLElement>('[data-evidence-key]') || [],
@@ -213,7 +292,9 @@ export function EventPane({
     <>
       <section className="inbox-chat" aria-label="相关聊天">
         <header className="event-chat-header">
-          <p className="pane-eyebrow">原文证据</p>
+          <p className="event-chat-account">
+            {customer?.label || `客户 ${event.uid}`}
+          </p>
           <ExpandableText
             as="h2"
             lines={2}
@@ -221,11 +302,31 @@ export function EventPane({
             text={eventDisplayTitle(event)}
             empty="未提供标题"
           />
-          {meta.length ? (
-            <p className="event-chat-meta">
-              {meta.map((item) => (
-                <span key={item}>{item}</span>
-              ))}
+          <div className="event-chat-meta-row">
+            {meta.length ? (
+              <p className="event-chat-meta">
+                {meta.map((item) => (
+                  <span key={item}>{item}</span>
+                ))}
+              </p>
+            ) : null}
+            <button
+              type="button"
+              className={`chat-context-toggle ${showContext ? 'is-active' : ''}`}
+              aria-pressed={showContext}
+              onClick={() => setShowContext((prev) => !prev)}
+            >
+              <MessagesSquare size={12} />
+              {contextLoading
+                ? '加载上下文…'
+                : showContext
+                  ? '仅看关联证据'
+                  : '显示前后群消息'}
+            </button>
+          </div>
+          {contextError && showContext ? (
+            <p className="chat-context-error" role="alert">
+              {contextError}
             </p>
           ) : null}
         </header>
@@ -235,65 +336,88 @@ export function EventPane({
           aria-label="聊天记录"
           key={event.event_id}
         >
-          {threadItems(event).map((entry) => {
-            if (entry.kind === 'group') {
-              const text = [entry.platform, entry.name]
-                .filter(Boolean)
-                .join(' · ');
-              return (
-                <li key={entry.key}>
-                  <p className="chat-group-label">{text}</p>
-                </li>
+          {threadItems(event, showContext ? contextData?.items : undefined).map(
+            (entry) => {
+              if (entry.kind === 'group') {
+                const text = [entry.platform, entry.name]
+                  .filter(Boolean)
+                  .join(' · ');
+                return (
+                  <li key={entry.key}>
+                    <p className="chat-group-label">{text}</p>
+                  </li>
+                );
+              }
+              if (entry.kind === 'date') {
+                return (
+                  <li key={entry.key}>
+                    <p className="chat-date">
+                      <time dateTime={entry.day}>{entry.label}</time>
+                    </p>
+                  </li>
+                );
+              }
+              const item = entry.item;
+              const identity = messageIdentity(
+                item.sender_role,
+                item.sender_kind,
               );
-            }
-            if (entry.kind === 'date') {
               return (
-                <li key={entry.key}>
-                  <p className="chat-date">
-                    <time dateTime={entry.day}>{entry.label}</time>
-                  </p>
-                </li>
-              );
-            }
-            const item = entry.item;
-            const identity = messageIdentity(
-              item.sender_role,
-              item.sender_kind,
-            );
-            return (
-              <li
-                key={evidenceKey(item)}
-                data-message-id={item.message_id}
-                data-evidence-key={evidenceKey(item)}
-                tabIndex={-1}
-                className={`chat-row ${identity.side}${focused === evidenceKey(item) ? ' evidence-focused' : ''}`}
-              >
-                <span className="chat-avatar" aria-hidden="true">
-                  {identity.avatar}
-                </span>
-                <div className="chat-message-body">
-                  <div className="chat-message-meta">
-                    <strong>{item.sender_name || '—'}</strong>
-                    {identity.label ? (
-                      <span className="chat-role">{identity.label}</span>
-                    ) : null}
-                    <time dateTime={item.send_time}>
-                      {formatClock(item.send_time)}
-                    </time>
+                <li
+                  key={evidenceKey(item)}
+                  data-message-id={item.message_id}
+                  data-evidence-key={evidenceKey(item)}
+                  tabIndex={-1}
+                  className={`chat-row ${identity.side}${entry.contextOnly ? ' is-context-only' : ''}${focused === evidenceKey(item) ? ' evidence-focused' : ''}`}
+                >
+                  <span className="chat-avatar" aria-hidden="true">
+                    {identity.avatar}
+                  </span>
+                  <div className="chat-message-body">
+                    <div className="chat-message-meta">
+                      <strong>{item.sender_name || '—'}</strong>
+                      {identity.label ? (
+                        <span className="chat-role">{identity.label}</span>
+                      ) : null}
+                      {entry.contextOnly ? (
+                        <span className="chat-context-tag">前后上下文</span>
+                      ) : null}
+                      <time dateTime={item.send_time}>
+                        {formatClock(item.send_time)}
+                      </time>
+                    </div>
+                    <ChatMessage
+                      excerpt={item.excerpt}
+                      content={item.content}
+                    />
                   </div>
-                  <ChatMessage excerpt={item.excerpt} content={item.content} />
-                </div>
-              </li>
-            );
-          })}
+                </li>
+              );
+            },
+          )}
         </ol>
         <p className="evidence-footer">
-          按消息时间排序 · 仅展示当前事件关联证据
+          {showContext
+            ? `按消息时间排序 · 已包含同群前后 15 分钟原始记录${contextData?.truncated ? '（已按条数上限截断）' : ''}`
+            : '按消息时间排序 · 仅展示当前事件关联证据'}
         </p>
       </section>
       <aside className="inbox-aside" aria-label="事件详情">
-        <h2 className="event-aside-title">事件详情</h2>
+        <div className="event-aside-head">
+          <h2 className="event-aside-title">事件详情</h2>
+          {customer?.stream && customer.stream !== event.stream ? (
+            <small>历史分析 · 只读</small>
+          ) : onEventUpdated ? (
+            <ManualDecisionDialog event={event} onUpdated={onEventUpdated} />
+          ) : null}
+        </div>
         <div className="event-aside inbox-pane-scroll" key={event.event_id}>
+          {event.review_flag ? (
+            <div className="aside-review-banner" role="status">
+              <AlertTriangle size={14} />
+              <span>{event.review_flag}</span>
+            </div>
+          ) : null}
           <dl className="aside-summary">
             <dt>摘要</dt>
             <dd>
@@ -307,14 +431,31 @@ export function EventPane({
           </dl>
           <dl className="aside-fields">
             <div>
-              <dt>类型</dt>
-              <dd>
-                <EventType type={event.type} />
+              <dt>
+                分类标签
+                {controls.types?.locked ? (
+                  <Lock size={11} className="inline-lock-icon" />
+                ) : null}
+              </dt>
+              <dd className="aside-type-badges">
+                {labels.map((label) => (
+                  <EventType key={label} type={label} />
+                ))}
               </dd>
             </div>
             <div>
-              <dt>事件等级</dt>
-              <dd>{event.severity || '未知'}</dd>
+              <dt>优先级</dt>
+              <dd className="aside-priority-cell">
+                <PriorityBadge
+                  priority={event.priority}
+                  basePriority={event.base_priority}
+                  detail={event.priority_detail}
+                  locked={Boolean(controls.priority?.locked)}
+                />
+                {priorityNote ? (
+                  <small className="aside-field-note">{priorityNote}</small>
+                ) : null}
+              </dd>
             </div>
             <div>
               <dt>客户 UID</dt>
@@ -330,7 +471,7 @@ export function EventPane({
                   <button
                     type="button"
                     className="aside-focus-customer"
-                    onClick={() => onSelectCustomer(event.uid, event.stream)}
+                    onClick={() => onSelectCustomer(event.uid)}
                   >
                     只看该客户
                   </button>
@@ -374,58 +515,88 @@ export function EventPane({
             <h3 id="event-handling">跟进信息</h3>
             <dl>
               <div>
-                <dt>跟进人</dt>
+                <dt>
+                  跟进人
+                  {controls.assignees?.locked ? (
+                    <Lock size={11} className="inline-lock-icon" />
+                  ) : null}
+                </dt>
                 <dd>{assignee || '未分配'}</dd>
               </div>
               <div>
                 <dt>状态</dt>
-                <dd>{status || '—'}</dd>
+                <dd className="aside-status-cell">
+                  <StatusBadge
+                    status={event.lifecycle_status || status || '状态未明'}
+                    waitingReason={event.waiting_reason}
+                    resolution={event.resolution}
+                    locked={Boolean(controls.status?.locked)}
+                  />
+                  {statusNote ? (
+                    <small className="aside-field-note">{statusNote}</small>
+                  ) : null}
+                </dd>
               </div>
             </dl>
           </section>
+          <ClassificationDetails
+            event={event}
+            evidence={evidence}
+            onLocate={locate}
+          />
           <RecoveryDetails event={event} />
           <section className="aside-timeline" aria-label="历次变化">
             <h3>历次变化</h3>
             {event.updated_by.length ? (
               <ol>
-                {event.updated_by.map((revision, index) => {
-                  const proof = revisionEvidence(
-                    revision,
-                    event.updated_by[index - 1]?.snapshot,
-                    evidence,
-                  );
-                  return (
-                    <li
-                      key={`${revision.revision_no ?? index}:${revision.window_start}`}
-                    >
-                      <strong>
-                        {revision.action === 'created'
-                          ? '创建事件'
-                          : '更新事件'}
-                      </strong>
-                      <small>
-                        {formatTime(revision.window_start)} —{' '}
-                        {formatTime(revision.window_end)}
-                      </small>
-                      <p>
-                        {revision.change_summary ||
-                          revisionHeadline(revision) ||
-                          '已保存本轮变化'}
-                      </p>
-                      {proof.locatable.map((key, position) => (
-                        <button
-                          type="button"
-                          key={key}
-                          className="evidence-locate"
-                          onClick={() => locate(key)}
-                        >
-                          定位原文
-                          {proof.locatable.length > 1 ? ` ${position + 1}` : ''}
-                        </button>
-                      ))}
-                    </li>
-                  );
-                })}
+                {event.updated_by
+                  .map((revision, index) => {
+                    const proof = revisionEvidence(
+                      revision,
+                      event.updated_by[index - 1]?.snapshot,
+                      evidence,
+                    );
+                    const isManual =
+                      revision.source === 'manual' ||
+                      revision.change_kind === 'manual';
+                    return (
+                      <li
+                        key={`${revision.revision_no ?? index}:${revision.window_start}`}
+                      >
+                        <strong>
+                          {revision.action === 'created'
+                            ? '创建事件'
+                            : isManual
+                              ? '人工裁定'
+                              : '更新事件'}
+                        </strong>
+                        <small>
+                          {isManual && revision.recorded_at
+                            ? formatTime(revision.recorded_at)
+                            : `${formatTime(revision.window_start)} — ${formatTime(revision.window_end)}`}
+                        </small>
+                        <p>
+                          {revision.change_summary ||
+                            revisionHeadline(revision) ||
+                            '已保存本轮变化'}
+                        </p>
+                        {proof.locatable.map((key, position) => (
+                          <button
+                            type="button"
+                            key={key}
+                            className="evidence-locate"
+                            onClick={() => locate(key)}
+                          >
+                            定位原文
+                            {proof.locatable.length > 1
+                              ? ` ${position + 1}`
+                              : ''}
+                          </button>
+                        ))}
+                      </li>
+                    );
+                  })
+                  .reverse()}
               </ol>
             ) : (
               <p>暂无已保存的变化记录</p>

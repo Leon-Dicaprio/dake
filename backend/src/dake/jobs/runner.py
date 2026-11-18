@@ -108,11 +108,21 @@ class RunRunner:
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread = None
+        self._coordinator_context = threading.local()
         self._keeper = None
         self.coordinator = None
         self.pipeline = None
         self.attempts = None
         self._workers = []
+
+    @property
+    def _keeper(self):
+        """协调锁连接只属于当前协调线程，不能被分析或抓取线程读取。"""
+        return getattr(self._coordinator_context, "keeper", None)
+
+    @_keeper.setter
+    def _keeper(self, value):
+        self._coordinator_context.keeper = value
 
     def start(self):
         """协调线程只负责编排；抓取和分析各自领取持久工作。"""
@@ -378,6 +388,10 @@ class RunRunner:
             check()
             self.repository.finish(run["run_id"], self.runner_id,
                 error="部分资料或群搜索查询失败，已保存有效结果；请查看客户状态后重新同步" if errors else None)
-        except Exception:
+        except Exception as error:
+            from ..ingestion.client import ChatRecordsError
+            from ..repositories.mysql import StorageError
+            detail = str(error) if isinstance(error, (ChatRecordsError, StorageError)) else ""
+            logging.getLogger(__name__).error("客户同步异常：%s %s", type(error).__name__, detail)
             self.repository.finish(run["run_id"], self.runner_id,
-                error="客户同步未完成，已提交结果保留；请检查接口、数据库和时间范围后重新同步")
+                error=detail or "客户同步未完成，已提交结果保留；请检查接口、数据库和时间范围后重新同步")

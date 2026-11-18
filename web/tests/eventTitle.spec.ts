@@ -9,6 +9,7 @@ import {
 } from '../src/pages/events/eventTitle';
 
 const legacyRevisionFields = {
+  source: 'automatic' as const,
   revision_no: null,
   recorded_at: null,
   change_kind: null,
@@ -16,6 +17,7 @@ const legacyRevisionFields = {
   summary_changed: null,
   changed_fields: [],
   changes: [],
+  manual_operation: null,
   policy_version: null,
 };
 

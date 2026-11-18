@@ -109,6 +109,7 @@ test('重试恢复结果标明来源，不伪造本次写入或完整输入', ()
 test('缺失历史快照时不能显示成摘要未变或状态已恢复', () => {
   const revision: API.EventRevision = {
     action: 'updated',
+    source: 'automatic',
     window_start: '2038-06-10T00:00:00+08:00',
     window_end: '2038-06-11T00:00:00+08:00',
     message_ids: ['missing-message'],
@@ -120,6 +121,7 @@ test('缺失历史快照时不能显示成摘要未变或状态已恢复', () =>
     summary_changed: null,
     changed_fields: [],
     changes: [],
+    manual_operation: null,
     policy_version: null,
   };
   const markup = renderToStaticMarkup(
@@ -154,18 +156,36 @@ test('同一消息编辑保留前后证据版本与摘要状态差异', () => {
     uid: 'synthetic-customer',
     stream: 'synthetic-stream',
     type: '排障',
+    types: ['排障'],
+    type_evidence: {},
+    removed_types: {},
+    classification_evidence_status: '未记录',
+    classification_status: '已分类',
+    other_reason: null,
+    typed_attributes: {},
     topic_key: null,
     start_time: old.send_time,
     end_time: old.send_time,
     created_on: old.send_time,
     status: '未知',
+    lifecycle_status: '状态未明',
+    waiting_reason: null,
+    resolution: null,
+    status_detail: null,
     severity: '未知',
+    priority: '待评估',
+    base_priority: '待评估',
+    priority_detail: null,
     summary: '虚构旧摘要',
     evidence: [old],
     assignees: [],
     attributes: {},
     extensions: {},
     review_flag: null,
+    review_items: [],
+    version: 1,
+    manual_controls: {},
+    manual_operations: [],
     closed_at: null,
     recovery: null,
     recurrence_of: null,
@@ -178,6 +198,7 @@ test('同一消息编辑保留前后证据版本与摘要状态差异', () => {
   };
   const revision: API.EventRevision = {
     action: 'updated',
+    source: 'automatic',
     window_start: '2038-06-10T00:00:00+08:00',
     window_end: '2038-06-11T00:00:00+08:00',
     message_ids: [old.message_id],
@@ -194,6 +215,7 @@ test('同一消息编辑保留前后证据版本与摘要状态差异', () => {
     summary_changed: true,
     changed_fields: ['summary', 'status'],
     changes: [],
+    manual_operation: null,
     policy_version: null,
   };
   const markup = renderToStaticMarkup(

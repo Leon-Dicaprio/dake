@@ -1,7 +1,9 @@
 """客户独立推进的隔离库验收：真实连接、线程和事务，消息全部现场合成。"""
 
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import timedelta
+import json
 from threading import Event as ThreadEvent, Thread
 from uuid import uuid4
 
@@ -9,7 +11,7 @@ import pytest
 
 from dake.analysis.providers.xhub import XHubProvider
 from dake.config import Settings, bound
-from dake.domain.models import Event, Message, Window
+from dake.domain.models import Candidate, Event, Message, Window
 from dake.ingestion.adapter import OfficialChatSource
 from dake.jobs.runner import RunRunner, prepare_request
 from dake.repositories.attempts import AttemptRepository
@@ -66,6 +68,27 @@ def _request(settings, uid, start):
     request.update(message_source="stored", allowed_groups=["synthetic-group"], strict_window=True,
         phase="catchup", catchup_target=(start + timedelta(hours=1)).isoformat())
     return request
+
+
+def test_progress_rows_project_old_and_new_cycles_without_snapshots(explicit_isolation, tmp_path):
+    """批量进度保留旧周期和隔离计数，跳过缺失运行，不传回事件快照。"""
+    runs = RunRepository(explicit_isolation.settings(tmp_path))
+    uid = "synthetic-progress-" + uuid4().hex[:8]
+    rid = runs.create(dict(uid=uid, mode="official"), 2)["run_id"]
+    audit = [dict(kind="withheld", count=2, incomplete=True)]
+    cycles = [dict(processed=3, created=["synthetic-event"], filter_audit=audit, events=[{"summary": "合成摘要"}]),
+              dict(updated=["synthetic-event"])]
+    with runs.connection() as store:
+        store._execute("UPDATE processing_runs SET cycles=%s,completed_windows=2,status='succeeded' WHERE run_id=%s",
+                       (json.dumps(cycles), rid))
+    projected = runs.progress_rows([rid, rid, str(uuid4())], include_cycles=True)
+    assert set(projected) == {rid}
+    assert sorted(projected[rid]["cycles"], key=lambda c: -c["processed"]) == [
+        dict(processed=3, created=["synthetic-event"], updated=[], filter_audit=audit),
+        dict(processed=0, created=[], updated=["synthetic-event"], filter_audit=[])]
+    head = runs.progress_rows([rid])[rid]
+    assert head["completed_windows"] == head["total_windows"] == 2
+    assert "cycles" not in head and "request" not in head
 
 
 def _open_slots(runs):
@@ -183,6 +206,95 @@ def test_slow_customer_does_not_stop_another_customers_next_window(explicit_isol
     assert provider.calls.count(fast) >= 2
 
 
+def test_empty_gap_commits_watermark_without_model_and_later_window_updates_event(explicit_isolation, tmp_path):
+    """有消息、空窗、再有消息连续提交，同一事件更新且模型只处理两个非空窗。"""
+    origin = bound("2026-11-16T11:00:00+08:00")
+    uid = "synthetic-gap-" + uuid4().hex[:12]
+    settings = explicit_isolation.settings(tmp_path, uid=uid, start=origin,
+        end=origin + timedelta(minutes=45), analysis_slots=2, live_reserved=0)
+    runs, attempts = RunRepository(settings), AttemptRepository(settings)
+    _open_slots(runs)
+    messages = [_message(uid, uuid4().hex, origin + timedelta(minutes=offset)) for offset in (1, 31)]
+    messages[1] = replace(messages[1], content="虚构工单 CASE-SYN-42 报告上传失败已定位为权限配置错误。")
+    def proposal(new, context, events):
+        message = new[0]
+        old = events[0] if events else None
+        return Candidate("排障", "synthetic-upload", message.content, [message.key],
+            decision="update" if old else "new", referenced_event_id=old.event_id if old else None,
+            decision_reason="同群上传故障的后续进展" if old else "首次反馈上传故障",
+            basis=[dict(message_id=m.key, quote=m.content) for m in ([messages[0], message] if old else [message])],
+            changes=[dict(kind="progress", text=message.content, replaces=None,
+                evidence=[dict(message_id=message.key, quote=message.content)])])
+    class Provider(FakeProvider):
+        def configure_history_context(self, result):
+            self.background = result
+    provider = Provider({message.message_id: proposal for message in messages}, name="stub-v1")
+    with runs.connection() as store:
+        with store.transaction(uid):
+            store.upsert_messages(messages)
+    runner = RunRunner(settings, runs)
+    runner.pipeline = PipelineRepository(settings)
+    with _factory(explicit_isolation, provider, attempts) as factory:
+        runner.service_factory = factory
+        for index in range(3):
+            request = _request(settings, uid, origin + timedelta(minutes=15 * index))
+            request["data_start"] = origin.isoformat()
+            runs.create(request, 1)
+            claimed = runs.claim_fair(runner.runner_id)
+            assert claimed and claimed["uid"] == uid
+            try:
+                runner.execute(claimed)
+            finally:
+                runs.release_slot(runner.runner_id, source=False, slot=claimed["_capacity_slot"])
+            saved = runs.get(claimed["run_id"])
+            assert saved["status"] == "succeeded", saved["error"]
+            with runs.connection() as store:
+                rows, _ = store._execute("SELECT analyzed_until FROM uid_pipeline_state WHERE uid=%s", (uid,))
+            assert rows[0]["analyzed_until"] == (origin + timedelta(minutes=15 * (index + 1))).replace(tzinfo=None)
+            if index == 1:
+                assert saved["cycles"][0]["processed"] == 0
+                assert len(provider.calls) == 1
+    assert len(provider.calls) == 2
+    with runs.connection() as store:
+        events = store.list_events(uid, "stub-v1")
+        rows, _ = store._execute("SELECT COUNT(*) AS n FROM processing_attempts WHERE uid=%s AND receipt IS NOT NULL", (uid,))
+    assert rows[0]["n"] == 3
+    assert len(events) == 1 and len(events[0].updated_by) == 2
+
+
+def test_analysis_worker_does_not_use_coordinator_connection(explicit_isolation, tmp_path):
+    """协调线程的锁和连接生命周期不影响独立工人的业务提交及进度保存。"""
+    origin = bound("2026-11-16T11:45:00+08:00")
+    uid = "synthetic-thread-" + uuid4().hex[:12]
+    settings = explicit_isolation.settings(tmp_path, uid=uid, start=origin,
+        end=origin + timedelta(minutes=15), analysis_slots=2, live_reserved=0)
+    runs, attempts = RunRepository(settings), AttemptRepository(settings)
+    _open_slots(runs)
+    with runs.connection() as store:
+        with store.transaction(uid):
+            store.upsert_messages([_message(uid, uuid4().hex, origin + timedelta(minutes=1))])
+    runs.create(_request(settings, uid, origin), 1)
+    runner = RunRunner(settings, runs)
+    runner.pipeline = PipelineRepository(settings)
+
+    class CoordinatorConnection:
+        def _execute(self, *args):
+            raise AssertionError("工人不得访问另一个线程的协调连接")
+
+    runner._keeper = CoordinatorConnection()
+    claimed = runs.claim_fair(runner.runner_id)
+    with _factory(explicit_isolation, FakeProvider(name="stub-v1"), attempts) as factory:
+        runner.service_factory = factory
+        worker = Thread(target=runner.execute, args=(claimed,))
+        worker.start()
+        worker.join(10)
+    runs.release_slot(runner.runner_id, source=False, slot=claimed["_capacity_slot"])
+    assert not worker.is_alive()
+    saved = runs.get(claimed["run_id"])
+    assert saved["status"] == "succeeded", saved["error"]
+    assert saved["completed_windows"] == 1
+
+
 def test_expired_lease_rejects_stale_commit_and_unknown_model_is_not_resent(explicit_isolation, tmp_path):
     """租约过期后旧工人不能提交；模型已发出但结果未知时换流也不能重跑。"""
     origin = bound("2026-11-16T12:00:00+08:00")
@@ -235,6 +347,11 @@ def test_incomplete_fetch_does_not_advance_and_late_or_unattributed_rows_stay_is
     assert pipeline.publish_source(first, message_count=1, isolated_count=0, complete=False, reason="响应不完整") is False
     assert pipeline.snapshot()["source"].get("fetched_until") in (None, "")
     assert pipeline.publish_source(first, message_count=1, isolated_count=0, complete=True) is True
+    assert pipeline.publish_source(first, message_count=2, isolated_count=0, complete=True) is True
+    with pipeline.connection() as store:
+        rows, _ = store._execute("SELECT message_count FROM source_windows WHERE window_start=%s AND window_end=%s",
+            (first.start.replace(tzinfo=None), first.end.replace(tzinfo=None)))
+    assert len(rows) == 1 and rows[0]["message_count"] == 2
     with pytest.raises(PipelineError, match="不能跳过"):
         pipeline.publish_source(skipped, message_count=1, isolated_count=0, complete=True)
     fetched = pipeline.snapshot()["source"]["fetched_until"]
@@ -297,38 +414,3 @@ def test_incomplete_fetch_does_not_advance_and_late_or_unattributed_rows_stay_is
         assert still and note and note[0]["kind"] == "source_deletion"
     finally:
         writer.close()
-
-
-def test_nonempty_empty_nonempty_windows_commit_contiguous_customer_progress(explicit_isolation, tmp_path):
-    origin = bound("2026-11-16T16:00:00+08:00")
-    uid = "synthetic-gap-" + uuid4().hex[:12]
-    settings = explicit_isolation.settings(tmp_path, uid=uid, start=origin, end=origin + timedelta(hours=1))
-    runs, attempts = RunRepository(settings), AttemptRepository(settings)
-    pipeline = PipelineRepository(settings)
-    _open_slots(runs)
-    with runs.connection() as store:
-        with store.transaction(uid):
-            store.upsert_messages([_message(uid, uuid4().hex, origin + timedelta(minutes=n)) for n in (1, 31)])
-    provider = FakeProvider(name="stub-v1")
-    counts = []
-    with _factory(explicit_isolation, provider, attempts) as factory:
-        runner = RunRunner(settings, runs, service_factory=factory)
-        runner.pipeline = pipeline
-        for minute in (0, 15, 30):
-            start = origin + timedelta(minutes=minute)
-            request = _request(settings, uid, start)
-            request["data_start"] = origin.isoformat()
-            submitted = runs.create(request, 1)
-            claimed = runs.claim_fair(runner.runner_id)
-            assert claimed["run_id"] == submitted["run_id"]
-            try:
-                runner.execute(claimed)
-            finally:
-                runs.release_slot(runner.runner_id, source=False, slot=claimed["_capacity_slot"])
-            result = runs.get(submitted["run_id"])
-            assert result["status"] == "succeeded", result["error"]
-            counts.append(result["cycles"][0]["processed"])
-    with runs.connection() as store:
-        rows, _ = store._execute("SELECT analyzed_until FROM uid_pipeline_state WHERE uid=%s", (uid,))
-    assert rows[0]["analyzed_until"] == (origin + timedelta(minutes=45)).replace(tzinfo=None)
-    assert counts == [1, 0, 1] and len(provider.calls) == 2

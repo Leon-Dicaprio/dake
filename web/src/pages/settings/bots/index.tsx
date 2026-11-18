@@ -4,6 +4,7 @@ import { ErrorNotice, LoadingRows } from '@/components/Feedback';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeading } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useResource } from '@/lib/useResource';
 import { errorMessage, formatTime } from '@/lib/utils';
 import { api } from '@/services/api';
@@ -28,6 +29,7 @@ export default function BotSettingsPage() {
     (signal) => api.senderCandidates(keyword, offset, signal),
   );
   const items = rules.data?.items || [];
+  const enabledCount = items.filter((item) => item.enabled).length;
 
   function search(value: string) {
     setInput(value);
@@ -89,9 +91,15 @@ export default function BotSettingsPage() {
       <header className="page-header">
         <div>
           <h1>机器人筛选</h1>
-          <p>维护已确认的通知账号，让事件分析聚焦客户讨论。</p>
+          {rules.data && (
+            <p>
+              {enabledCount} 条规则已启用 · {items.length - enabledCount}{' '}
+              条已停用
+            </p>
+          )}
         </div>
         <Button
+          variant="ghost"
           onClick={() => {
             rules.refresh();
             candidates.refresh();
@@ -101,15 +109,6 @@ export default function BotSettingsPage() {
           刷新
         </Button>
       </header>
-      <div className="bot-policy-note">
-        <Bot size={20} />
-        <div>
-          <strong>原文保留，纯机器人通知不单独生成事件</strong>
-          <p>
-            有人讨论相关问题时，通知仍可作为辅助证据。按账号和适用范围识别，改名不影响已配置规则。
-          </p>
-        </div>
-      </div>
       {notice && (
         <p role="status" className="bot-save-notice">
           {notice}
@@ -121,199 +120,214 @@ export default function BotSettingsPage() {
       {error && !editing && (
         <ErrorNotice message={error} retry={rules.refresh} />
       )}
-      <fieldset className="bot-rule-tabs" aria-label="机器人配置视图">
-        <Button
-          variant={tab === 'rules' ? 'primary' : 'ghost'}
-          aria-pressed={tab === 'rules'}
-          onClick={() => setTab('rules')}
-        >
-          已配置账号 · {items.length}
-        </Button>
-        <Button
-          variant={tab === 'search' ? 'primary' : 'ghost'}
-          aria-pressed={tab === 'search'}
-          onClick={() => setTab('search')}
-        >
-          <Search size={15} />
-          查找账号
-        </Button>
-      </fieldset>
-      {tab === 'rules' ? (
-        <section aria-label="已配置账号" className="bot-table-panel">
-          {rules.loading && !rules.data ? (
-            <LoadingRows />
-          ) : (
-            <table className="bot-rule-table">
-              <thead>
-                <tr>
-                  <th>账号</th>
-                  <th>适用范围</th>
-                  <th>身份</th>
-                  <th>状态</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((item) => (
-                  <tr key={item.rule_id}>
-                    <td>
-                      <strong>{item.label || item.sender_id}</strong>
-                      <small>{item.sender_id}</small>
-                    </td>
-                    <td>
-                      客户 {item.uid}
-                      <small>
-                        {item.conversation_id
-                          ? `指定群：${item.conversation_id}`
-                          : '该客户的全部群'}
-                      </small>
-                    </td>
-                    <td>{identities[item.kind || 'bot']}</td>
-                    <td>{item.enabled ? '已启用' : '已停用'}</td>
-                    <td className="bot-row-actions">
-                      <Button
-                        size="small"
-                        variant="ghost"
-                        disabled={busy || rules.loading}
-                        onClick={() => edit(item)}
-                      >
-                        <Pencil size={14} />
-                        编辑
-                      </Button>
-                      <Button
-                        size="small"
-                        disabled={busy || rules.loading}
-                        onClick={() => {
-                          const { rule_id, ...rule } = item;
-                          void save(
-                            { ...rule, enabled: !item.enabled },
-                            rule_id,
-                          );
-                        }}
-                      >
-                        {item.enabled ? '停用' : '启用'}
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-                {!items.length && (
-                  <tr>
-                    <td colSpan={5} className="bot-empty">
-                      暂无配置，先从已同步的消息中查找账号。
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          )}
-        </section>
-      ) : (
-        <section aria-label="查找发送账号">
-          <form
-            className="bot-search-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              search(input);
-            }}
-          >
-            <Input
-              aria-label="账号名称或账号"
-              placeholder="搜索发送人名称或账号"
-              maxLength={128}
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-            />
-            <Button type="submit">
-              <Search size={15} />
-              搜索
-            </Button>
-            <Button variant="ghost" onClick={() => search('maas')}>
-              查找 MAAS 账号
-            </Button>
-          </form>
-          <p className="bot-search-help">
-            名称仅用于查找。同名账号可能不同，请核对客户、群聊和账号后再配置。
-          </p>
-          {candidates.error && (
-            <ErrorNotice
-              message={candidates.error}
-              retry={candidates.refresh}
-            />
-          )}
-          {candidates.loading ? (
-            <LoadingRows />
-          ) : (
-            <div className="bot-table-panel">
+      <Tabs
+        value={tab}
+        onValueChange={(value) =>
+          setTab(value === 'search' ? 'search' : 'rules')
+        }
+      >
+        <TabsList aria-label="机器人配置视图">
+          <TabsTrigger value="rules" className="flex items-center gap-2">
+            已配置账号 <span className="heading-count">{items.length}</span>
+          </TabsTrigger>
+          <TabsTrigger value="search" className="flex items-center gap-2">
+            <Search size={15} />
+            查找账号
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="rules">
+          <section aria-label="已配置账号" className="bot-table-panel">
+            {rules.loading && !rules.data ? (
+              <LoadingRows />
+            ) : (
               <table className="bot-rule-table">
                 <thead>
                   <tr>
-                    <th>发送账号</th>
-                    <th>客户与群</th>
-                    <th>已接收消息</th>
-                    <th>当前身份</th>
+                    <th>账号</th>
+                    <th>适用范围</th>
+                    <th>身份</th>
+                    <th>状态</th>
                     <th>操作</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {candidates.data?.items.map((item) => (
+                  {items.map((item) => (
                     <tr key={item.rule_id}>
                       <td>
-                        <strong>{item.sender_name}</strong>
+                        <strong>{item.label || item.sender_id}</strong>
                         <small>{item.sender_id}</small>
                       </td>
                       <td>
                         客户 {item.uid}
-                        <small>{item.conversation_name}</small>
+                        <small>
+                          {item.conversation_id
+                            ? `指定群：${item.conversation_id}`
+                            : '该客户的全部群'}
+                        </small>
                       </td>
+                      <td>{identities[item.kind || 'bot']}</td>
                       <td>
-                        {item.message_count} 条
-                        <small>{formatTime(item.last_seen_at)}</small>
+                        <span
+                          className={`bot-status ${item.enabled ? 'enabled' : ''}`}
+                        >
+                          {item.enabled ? '已启用' : '已停用'}
+                        </span>
                       </td>
-                      <td>{identities[item.sender_kind]}</td>
-                      <td>
+                      <td className="bot-row-actions">
                         <Button
                           size="small"
-                          disabled={busy || !rules.data || rules.loading}
-                          onClick={() => select(item)}
+                          variant="ghost"
+                          disabled={busy || rules.loading}
+                          onClick={() => edit(item)}
                         >
-                          {item.configured ? '编辑配置' : '配置账号'}
+                          <Pencil size={14} />
+                          编辑
+                        </Button>
+                        <Button
+                          size="small"
+                          disabled={busy || rules.loading}
+                          onClick={() => {
+                            const { rule_id, ...rule } = item;
+                            void save(
+                              { ...rule, enabled: !item.enabled },
+                              rule_id,
+                            );
+                          }}
+                        >
+                          {item.enabled ? '停用' : '启用'}
                         </Button>
                       </td>
                     </tr>
                   ))}
-                  {!candidates.data?.items.length && (
+                  {!items.length && (
                     <tr>
                       <td colSpan={5} className="bot-empty">
-                        未找到匹配账号，可在相关消息同步后再查找。
+                        暂无配置，先从已同步的消息中查找账号。
                       </td>
                     </tr>
                   )}
                 </tbody>
               </table>
+            )}
+          </section>
+        </TabsContent>
+        <TabsContent value="search">
+          <section aria-label="查找发送账号">
+            <form
+              className="bot-search-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                search(input);
+              }}
+            >
+              <Input
+                aria-label="账号名称或账号"
+                placeholder="搜索发送人名称或账号"
+                maxLength={128}
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+              />
+              <Button type="submit">
+                <Search size={15} />
+                搜索
+              </Button>
+              <Button variant="ghost" onClick={() => search('maas')}>
+                查找 MAAS 账号
+              </Button>
+            </form>
+            <p className="bot-search-help">
+              名称仅用于查找。同名账号可能不同，请核对客户、群聊和账号后再配置。
+            </p>
+            {candidates.error && (
+              <ErrorNotice
+                message={candidates.error}
+                retry={candidates.refresh}
+              />
+            )}
+            {candidates.loading ? (
+              <LoadingRows />
+            ) : (
+              <div className="bot-table-panel">
+                <table className="bot-rule-table">
+                  <thead>
+                    <tr>
+                      <th>发送账号</th>
+                      <th>客户与群</th>
+                      <th>已接收消息</th>
+                      <th>当前身份</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {candidates.data?.items.map((item) => (
+                      <tr key={item.rule_id}>
+                        <td>
+                          <strong>{item.sender_name}</strong>
+                          <small>{item.sender_id}</small>
+                        </td>
+                        <td>
+                          客户 {item.uid}
+                          <small>{item.conversation_name}</small>
+                        </td>
+                        <td>
+                          {item.message_count} 条
+                          <small>{formatTime(item.last_seen_at)}</small>
+                        </td>
+                        <td>{identities[item.sender_kind]}</td>
+                        <td>
+                          <Button
+                            size="small"
+                            disabled={busy || !rules.data || rules.loading}
+                            onClick={() => select(item)}
+                          >
+                            {item.configured ? '编辑配置' : '配置账号'}
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                    {!candidates.data?.items.length && (
+                      <tr>
+                        <td colSpan={5} className="bot-empty">
+                          未找到匹配账号，可在相关消息同步后再查找。
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div className="bot-paging">
+              <span>共 {candidates.data?.total || 0} 条账号与群记录</span>
+              <Button
+                size="small"
+                disabled={offset === 0 || candidates.loading}
+                onClick={() => setOffset(Math.max(0, offset - 25))}
+              >
+                上一页
+              </Button>
+              <Button
+                size="small"
+                disabled={
+                  candidates.loading ||
+                  offset + 25 >= (candidates.data?.total || 0)
+                }
+                onClick={() => setOffset(offset + 25)}
+              >
+                下一页
+              </Button>
             </div>
-          )}
-          <div className="bot-paging">
-            <span>共 {candidates.data?.total || 0} 条账号与群记录</span>
-            <Button
-              size="small"
-              disabled={offset === 0 || candidates.loading}
-              onClick={() => setOffset(Math.max(0, offset - 25))}
-            >
-              上一页
-            </Button>
-            <Button
-              size="small"
-              disabled={
-                candidates.loading ||
-                offset + 25 >= (candidates.data?.total || 0)
-              }
-              onClick={() => setOffset(offset + 25)}
-            >
-              下一页
-            </Button>
-          </div>
-        </section>
-      )}
+          </section>
+        </TabsContent>
+      </Tabs>
+      <aside className="bot-policy-note" aria-label="筛选说明">
+        <Bot size={17} aria-hidden="true" />
+        <div>
+          <strong>机器人通知保留原文，不单独生成事件。</strong>
+          <p>
+            有人参与讨论时，通知仍可作为证据。按账号和适用范围识别，改名不影响已有规则。
+          </p>
+        </div>
+      </aside>
       {editing && (
         <RuleEditor
           editing={editing}
@@ -354,7 +368,7 @@ function RuleEditor({
         if (!open) onClose();
       }}
     >
-      <DialogContent className="bot-rule-dialog">
+      <DialogContent className="dialog-centered bot-rule-dialog">
         <DialogHeading
           title="配置账号身份"
           description="保存后影响后续处理窗口；已生成的历史事件不会自动重算。"

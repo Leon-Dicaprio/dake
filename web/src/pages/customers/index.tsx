@@ -1,6 +1,6 @@
 import {
   ArrowUpRight,
-  Building2,
+  ChevronRight,
   Copy,
   Crown,
   RefreshCw,
@@ -11,8 +11,14 @@ import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'umi';
 import { ErrorNotice, LoadingRows } from '@/components/Feedback';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeading } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeading,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import { useWorkspace } from '@/layouts/Workspace';
+import { savedEventCount } from '@/lib/customerEvents';
 import { useResource } from '@/lib/useResource';
 import { errorMessage, formatTime } from '@/lib/utils';
 import { api } from '@/services/api';
@@ -77,6 +83,7 @@ function Paging({
 }) {
   const pages = Math.max(1, Math.ceil(total / pageSize));
   const current = Math.floor(offset / pageSize) + 1;
+  if (!onSizeChange && pages === 1) return null;
   const numbers = [...new Set([1, current - 1, current, current + 1, pages])]
     .filter((p) => p > 0 && p <= pages)
     .sort((a, b) => a - b);
@@ -141,7 +148,6 @@ function Paging({
 export default function CustomersPage() {
   const [params, setParams] = useSearchParams();
   const workspace = useWorkspace();
-  const [syncOpen, setSyncOpen] = useState(false);
   const [copyState, setCopyState] = useState({ uid: '', message: '' });
   const uid = params.get('uid') || '';
   const runId = params.get('sync') || '';
@@ -269,373 +275,394 @@ export default function CustomersPage() {
     { newCustomers: 0, refreshed: 0, reviews: 0 },
   );
   return (
-    <main className="customers-page">
-      <header className="customers-header">
-        <div>
-          <h1>
-            客户管理{' '}
-            <span className="heading-count">
-              {customers.data?.total ?? '—'}
-            </span>
-          </h1>
-          <p>维护客户分级、负责人和群归属</p>
-        </div>
-        <div className="customer-header-actions">
-          <Button variant="primary" onClick={() => setSyncOpen(true)}>
-            <RefreshCw size={15} />
-            同步客户
-          </Button>
-          <Button onClick={refresh}>
-            <RefreshCw size={15} />
-            刷新
-          </Button>
-        </div>
-      </header>
-      <div className="customer-columns">
-        <section className="customer-directory" aria-label="客户列表">
-          <div className="customer-directory-tools">
-            <div className="customer-filter">
-              <label htmlFor="customer-segment">客户范围</label>
-              <select
-                id="customer-segment"
-                value={segment}
-                onChange={(event) => {
-                  const next = new URLSearchParams(params);
-                  next.set('segment', event.target.value);
-                  next.delete('uid');
-                  setParams(next);
-                  setPagination({ key: '', offset: 0 });
-                  setReview(false);
+    <Dialog>
+      <main className="page customers-page">
+        <header className="page-header customers-header">
+          <h1>客户管理</h1>
+          <div className="customer-header-actions">
+            <Button variant="ghost" onClick={refresh}>
+              <RefreshCw size={15} />
+              刷新
+            </Button>
+            <DialogTrigger asChild>
+              <Button variant="primary">
+                <UsersRound size={15} />
+                同步客户
+              </Button>
+            </DialogTrigger>
+          </div>
+        </header>
+        <div className="customer-columns">
+          <section className="customer-directory" aria-label="客户列表">
+            <div className="customer-directory-heading">
+              <h2>客户名录</h2>
+              {customers.data && (
+                <span>
+                  共 {customers.data.total.toLocaleString('zh-CN')} 位客户
+                </span>
+              )}
+            </div>
+            <div className="customer-directory-tools">
+              <div className="customer-filter">
+                <label htmlFor="customer-segment">客户范围</label>
+                <select
+                  id="customer-segment"
+                  value={segment}
+                  onChange={(event) => {
+                    const next = new URLSearchParams(params);
+                    next.set('segment', event.target.value);
+                    next.delete('uid');
+                    setParams(next);
+                    setPagination({ key: '', offset: 0 });
+                    setReview(false);
+                    setGroupOffset(0);
+                  }}
+                >
+                  {customerFilters.map((item) => (
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <form
+                className="customer-search"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  setQuery(keyword.trim());
+                  setOffset(0);
+                }}
+              >
+                <Search size={16} />
+                <input
+                  aria-label="搜索客户 UID"
+                  placeholder="按客户 UID 搜索"
+                  value={keyword}
+                  onChange={(event) => setKeyword(event.target.value)}
+                />
+                <Button type="submit" size="small">
+                  查询
+                </Button>
+              </form>
+            </div>
+            {customers.error && (
+              <ErrorNotice
+                message={customers.error}
+                retry={customers.refresh}
+              />
+            )}
+            {!customers.data && customers.loading ? (
+              <LoadingRows />
+            ) : (
+              <div className="customer-table-scroll">
+                <table className="customer-table">
+                  <thead>
+                    <tr>
+                      <th>客户</th>
+                      <th>分级</th>
+                      <th>主 TAM</th>
+                      <th>关联群</th>
+                      <th>消息数</th>
+                      <th>事件数</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {customers.data?.items.map((item) => (
+                      <tr
+                        key={item.uid}
+                        className={selectedUid === item.uid ? 'selected' : ''}
+                      >
+                        <td>
+                          <button
+                            type="button"
+                            className="customer-link"
+                            title="查看客户资料"
+                            aria-pressed={selectedUid === item.uid}
+                            onClick={() => {
+                              select('uid', item.uid);
+                              setReview(false);
+                              setGroupOffset(0);
+                            }}
+                          >
+                            <span>
+                              <strong>
+                                {customerInfo(item.uid)?.label ||
+                                  `客户 ${item.uid}`}
+                              </strong>
+                              <small>UID {item.uid}</small>
+                            </span>
+                            <ChevronRight size={14} aria-hidden="true" />
+                          </button>
+                        </td>
+                        <td>
+                          <div className="customer-level-cell">
+                            <strong>{item.level || '未知'}</strong>
+                            {item.is_super_large ? (
+                              <span className="customer-tier-pill super">
+                                <Crown size={11} />
+                                超级大客
+                              </span>
+                            ) : null}
+                          </div>
+                          {item.level_state !== 'fresh' && (
+                            <small className="customer-warning">
+                              {freshness[item.level_state] || '待确认'}
+                            </small>
+                          )}
+                        </td>
+                        <td>
+                          {item.tam || '—'}
+                          {item.tam_state !== 'fresh' && (
+                            <small className="customer-warning">
+                              {freshness[item.tam_state] || '待确认'}
+                            </small>
+                          )}
+                        </td>
+                        <td>{item.group_count}</td>
+                        <td>
+                          {customerInfo(
+                            item.uid,
+                          )?.message_count?.toLocaleString('zh-CN') ?? '—'}
+                        </td>
+                        <td>
+                          {savedEventCount(
+                            customerInfo(item.uid),
+                          )?.toLocaleString('zh-CN') ?? '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {customers.data?.total === 0 && (
+                  <div className="customer-empty">
+                    <UsersRound size={24} />
+                    <h3>
+                      {query || segment !== 'all'
+                        ? '没有符合筛选条件的客户'
+                        : '还没有发现客户'}
+                    </h3>
+                    <p>
+                      {query || segment !== 'all'
+                        ? '可切换客户范围或调整 UID 搜索条件。'
+                        : '同步一个有聊天的时间段后，客户资料会显示在这里。'}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+            <Paging
+              offset={offset}
+              total={customers.data?.total || 0}
+              pageSize={pageSize}
+              loading={customers.loading}
+              onSizeChange={(size) => {
+                setPageSize(size);
+                const next = new URLSearchParams(params);
+                next.delete('uid');
+                setParams(next);
+              }}
+              onChange={(value) => {
+                setOffset(value);
+                const next = new URLSearchParams(params);
+                next.delete('uid');
+                setParams(next);
+              }}
+            />
+          </section>
+          <aside className="customer-profile-panel" aria-label="客户资料">
+            <h2>客户资料</h2>
+            {selected ? (
+              <>
+                <h3 className="customer-profile-name">
+                  {profile?.label || `客户 ${selected.uid}`}
+                </h3>
+                <div className="customer-profile-uid">
+                  UID {selected.uid}
+                  <button
+                    type="button"
+                    aria-label="复制客户 UID"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(selected.uid);
+                        setCopyState({ uid: selected.uid, message: '已复制' });
+                      } catch {
+                        setCopyState({
+                          uid: selected.uid,
+                          message: '复制失败，请手动复制 UID',
+                        });
+                      }
+                    }}
+                  >
+                    <Copy size={14} />
+                  </button>
+                </div>
+                <span role="status" className="customer-muted">
+                  {copyState.uid === selectedUid ? copyState.message : ''}
+                </span>
+                <div className="customer-profile-tier">
+                  <span
+                    className={`customer-tier-pill ${selected.is_super_large ? 'super' : selected.segment === 'large' ? 'large' : 'pending'}`}
+                  >
+                    {selected.is_super_large && <Crown size={12} />}
+                    {selected.level || '未知'} ·{' '}
+                    {selected.is_super_large
+                      ? '超大客'
+                      : segmentLabels[selected.segment]}
+                  </span>
+                </div>
+                <dl className="customer-activity" aria-label="客户活动">
+                  <div>
+                    <dt>关联群</dt>
+                    <dd>{selected.group_count.toLocaleString('zh-CN')}</dd>
+                  </div>
+                  <div>
+                    <dt>消息</dt>
+                    <dd>
+                      {profile?.message_count?.toLocaleString('zh-CN') ?? '—'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>事件</dt>
+                    <dd>
+                      {savedEventCount(profile)?.toLocaleString('zh-CN') ?? '—'}
+                    </dd>
+                  </div>
+                </dl>
+                <Link
+                  className="customer-enter"
+                  to={`/events?uid=${selected.uid}`}
+                >
+                  进入工作台 <ArrowUpRight size={15} aria-hidden="true" />
+                </Link>
+                <section className="customer-owner">
+                  <h2>负责人</h2>
+                  <dl>
+                    <dt>主 TAM</dt>
+                    <dd>{selected.tam || '未知'}</dd>
+                    <dt>备用 TAM</dt>
+                    <dd>{selected.tam_b || '未知'}</dd>
+                  </dl>
+                  <p className="customer-muted">
+                    {freshness[selected.tam_state] || '待确认'} · 最近查询{' '}
+                    {formatTime(selected.attempted_at)}
+                  </p>
+                  {selected.level_state !== 'fresh' && (
+                    <p className="customer-warning">
+                      等级{freshness[selected.level_state] || '待确认'}
+                      ，旧等级仅供参考。
+                    </p>
+                  )}
+                </section>
+              </>
+            ) : (
+              <p className="customer-empty">
+                {uid
+                  ? '当前列表中没有该客户，请调整筛选或选择其他客户。'
+                  : '选择客户查看资料'}
+              </p>
+            )}
+            <div className="customer-group-heading">
+              <h2>
+                {review
+                  ? '归属待确认'
+                  : selectedUid
+                    ? `关联群（${groups.data?.total ?? 0}）`
+                    : '关联群'}
+              </h2>
+              <Button
+                size="small"
+                variant="ghost"
+                onClick={() => {
+                  setReview(!review);
                   setGroupOffset(0);
                 }}
               >
-                {customerFilters.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <form
-              className="customer-search"
-              onSubmit={(event) => {
-                event.preventDefault();
-                setQuery(keyword.trim());
-                setOffset(0);
-              }}
-            >
-              <Search size={16} />
-              <input
-                aria-label="搜索客户 UID"
-                placeholder="按客户 UID 搜索"
-                value={keyword}
-                onChange={(event) => setKeyword(event.target.value)}
-              />
-              <Button type="submit" size="small">
-                查询
+                {review ? '返回客户关联群' : '查看全部待确认群'}
               </Button>
-            </form>
-          </div>
-          {customers.error && (
-            <ErrorNotice message={customers.error} retry={customers.refresh} />
-          )}
-          {!customers.data && customers.loading ? (
-            <LoadingRows />
-          ) : (
-            <div className="customer-table-scroll">
-              <table className="customer-table">
-                <thead>
-                  <tr>
-                    <th>客户</th>
-                    <th>分级</th>
-                    <th>主 TAM</th>
-                    <th>关联群</th>
-                    <th>消息数</th>
-                    <th>事件数</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {customers.data?.items.map((item) => (
-                    <tr
-                      key={item.uid}
-                      className={selectedUid === item.uid ? 'selected' : ''}
-                    >
-                      <td>
-                        <button
-                          type="button"
-                          className="customer-link"
-                          aria-pressed={selectedUid === item.uid}
-                          onClick={() => {
-                            select('uid', item.uid);
-                            setReview(false);
-                            setGroupOffset(0);
-                          }}
+            </div>
+            {groups.error && (
+              <ErrorNotice message={groups.error} retry={groups.refresh} />
+            )}
+            {groups.loading && !groups.data ? (
+              <LoadingRows />
+            ) : groups.data ? (
+              <>
+                <div className="customer-group-list">
+                  {groups.data.items.map((group) => (
+                    <article key={`${group.source}:${group.group_id}`}>
+                      <div>
+                        <strong>{group.group_name || '群名未知'}</strong>
+                        <span
+                          className={
+                            group.status === 'review' ? 'customer-warning' : ''
+                          }
                         >
-                          <Building2 size={18} />
-                          <span>
-                            <strong>
-                              {customerInfo(item.uid)?.label ||
-                                `客户 ${item.uid}`}
-                            </strong>
-                            <small>UID {item.uid}</small>
-                          </span>
-                        </button>
-                      </td>
-                      <td>
-                        <div className="customer-level-cell">
-                          <strong>{item.level || '未知'}</strong>
-                          {item.is_super_large ? (
-                            <span className="customer-tier-pill super">
-                              <Crown size={11} />
-                              超级大客
-                            </span>
-                          ) : null}
-                        </div>
-                        {item.level_state !== 'fresh' && (
-                          <small className="customer-warning">
-                            {freshness[item.level_state] || '待确认'}
-                          </small>
+                          {group.status === 'review' ? '待确认' : '已确认'}
+                        </span>
+                      </div>
+                      <small>
+                        群 {group.group_id} · 客户 {group.uid || '未知'}
+                      </small>
+                      <p>{group.reason}</p>
+                      {group.status === 'review' &&
+                        group.candidate_uids.length > 0 && (
+                          <p>候选客户：{group.candidate_uids.join('、')}</p>
                         )}
-                      </td>
-                      <td>
-                        {item.tam || '—'}
-                        {item.tam_state !== 'fresh' && (
-                          <small className="customer-warning">
-                            {freshness[item.tam_state] || '待确认'}
-                          </small>
-                        )}
-                      </td>
-                      <td>{item.group_count}</td>
-                      <td>{customerInfo(item.uid)?.message_count ?? '—'}</td>
-                      <td>{customerInfo(item.uid)?.event_count ?? '—'}</td>
-                      <td>
-                        <button
-                          type="button"
-                          className="customer-detail-link"
-                          onClick={() => {
-                            select('uid', item.uid);
-                            setReview(false);
-                            setGroupOffset(0);
-                          }}
-                        >
-                          详情
-                        </button>
-                      </td>
-                    </tr>
+                    </article>
                   ))}
-                </tbody>
-              </table>
-              {customers.data?.total === 0 && (
-                <div className="customer-empty">
-                  <UsersRound size={24} />
-                  <h3>
-                    {query || segment !== 'all'
-                      ? '没有符合筛选条件的客户'
-                      : '还没有发现客户'}
-                  </h3>
-                  <p>
-                    {query || segment !== 'all'
-                      ? '可切换客户范围或调整 UID 搜索条件。'
-                      : '同步一个有聊天的时间段后，客户资料会显示在这里。'}
-                  </p>
                 </div>
-              )}
-            </div>
-          )}
-          <Paging
-            offset={offset}
-            total={customers.data?.total || 0}
-            pageSize={pageSize}
-            loading={customers.loading}
-            onSizeChange={(size) => {
-              setPageSize(size);
-              const next = new URLSearchParams(params);
-              next.delete('uid');
-              setParams(next);
-            }}
-            onChange={(value) => {
-              setOffset(value);
-              const next = new URLSearchParams(params);
-              next.delete('uid');
-              setParams(next);
-            }}
-          />
-        </section>
-        <aside className="customer-profile-panel" aria-label="客户资料">
-          <h2>客户资料</h2>
-          {selected ? (
-            <>
-              <h3 className="customer-profile-name">
-                {profile?.label || `客户 ${selected.uid}`}
-              </h3>
-              <div className="customer-profile-uid">
-                UID {selected.uid}
-                <button
-                  type="button"
-                  aria-label="复制客户 UID"
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(selected.uid);
-                      setCopyState({ uid: selected.uid, message: '已复制' });
-                    } catch {
-                      setCopyState({
-                        uid: selected.uid,
-                        message: '复制失败，请手动复制 UID',
-                      });
-                    }
-                  }}
-                >
-                  <Copy size={14} />
-                </button>
-              </div>
-              <span role="status" className="customer-muted">
-                {copyState.uid === selectedUid ? copyState.message : ''}
-              </span>
-              <div className="customer-profile-tier">
-                <span
-                  className={`customer-tier-pill ${selected.is_super_large ? 'super' : selected.segment === 'large' ? 'large' : 'pending'}`}
-                >
-                  {selected.is_super_large && <Crown size={12} />}
-                  {selected.level || '未知'} ·{' '}
-                  {selected.is_super_large
-                    ? '超大客'
-                    : segmentLabels[selected.segment]}
-                </span>
-              </div>
-              <Button asChild className="customer-enter">
-                <Link to={`/events?uid=${selected.uid}`}>
-                  进入工作台
-                  <ArrowUpRight size={16} />
-                </Link>
-              </Button>
-              <section className="customer-owner">
-                <h2>负责人</h2>
-                <dl>
-                  <dt>主 TAM</dt>
-                  <dd>{selected.tam || '未知'}</dd>
-                  <dt>备用 TAM</dt>
-                  <dd>{selected.tam_b || '未知'}</dd>
-                </dl>
-                <p className="customer-muted">
-                  {freshness[selected.tam_state] || '待确认'} · 最近查询{' '}
-                  {formatTime(selected.attempted_at)}
-                </p>
-                {selected.level_state !== 'fresh' && (
-                  <p className="customer-warning">
-                    等级{freshness[selected.level_state] || '待确认'}
-                    ，旧等级仅供参考。
+                {groups.data.total === 0 && (
+                  <p className="customer-empty">
+                    {review
+                      ? '目前没有归属待确认的群。'
+                      : '该客户没有已保存的关联群。'}
                   </p>
                 )}
-              </section>
-            </>
-          ) : (
-            <p className="customer-empty">
-              {uid
-                ? '当前列表中没有该客户，请调整筛选或选择其他客户。'
-                : '选择客户查看资料'}
-            </p>
-          )}
-          <div className="customer-group-heading">
-            <h2>
-              {review
-                ? '归属待确认'
-                : selectedUid
-                  ? `关联群（${groups.data?.total ?? 0}）`
-                  : '关联群'}
-            </h2>
-            <Button
-              size="small"
-              onClick={() => {
-                setReview(!review);
-                setGroupOffset(0);
-              }}
-            >
-              {review ? '返回客户关联群' : '查看全部待确认群'}
-            </Button>
-          </div>
-          {groups.error && (
-            <ErrorNotice message={groups.error} retry={groups.refresh} />
-          )}
-          {groups.loading && !groups.data ? (
-            <LoadingRows />
-          ) : groups.data ? (
-            <>
-              <div className="customer-group-list">
-                {groups.data.items.map((group) => (
-                  <article key={`${group.source}:${group.group_id}`}>
-                    <div>
-                      <strong>{group.group_name || '群名未知'}</strong>
-                      <span
-                        className={
-                          group.status === 'review' ? 'customer-warning' : ''
-                        }
-                      >
-                        {group.status === 'review' ? '待确认' : '已确认'}
-                      </span>
-                    </div>
-                    <small>
-                      群 {group.group_id} · 客户 {group.uid || '未知'}
-                    </small>
-                    <p>{group.reason}</p>
-                    {group.status === 'review' &&
-                      group.candidate_uids.length > 0 && (
-                        <p>候选客户：{group.candidate_uids.join('、')}</p>
-                      )}
-                  </article>
-                ))}
-              </div>
-              {groups.data.total === 0 && (
-                <p className="customer-empty">
-                  {review
-                    ? '目前没有归属待确认的群。'
-                    : '该客户没有已保存的关联群。'}
-                </p>
-              )}
-              <Paging
-                offset={groupOffset}
-                total={groups.data.total}
-                onChange={setGroupOffset}
-              />
-            </>
-          ) : (
-            <p className="customer-empty">
-              选择客户查看关联群，或查看全部待确认群。
-            </p>
-          )}
-        </aside>
-      </div>
-      <Dialog open={syncOpen} onOpenChange={setSyncOpen}>
-        <DialogContent className="customer-sync-dialog">
-          <DialogHeading
-            title="同步客户"
-            description="从官方接口发现客户，更新等级、负责人和群归属。"
-          />
-          <form className="customer-sync-form" onSubmit={submit}>
-            <div>
-              <h2>同步客户</h2>
-              <p>
-                选择上海时间范围，最多一天。只更新客户资料，不进行事件分析。
+                <Paging
+                  offset={groupOffset}
+                  total={groups.data.total}
+                  onChange={setGroupOffset}
+                />
+              </>
+            ) : (
+              <p className="customer-empty">
+                选择客户查看关联群，或查看全部待确认群。
               </p>
-            </div>
-            <label>
-              开始时间
-              <input
-                type="datetime-local"
-                value={start}
-                onChange={(event) => setStart(event.target.value)}
-                required
-              />
-            </label>
-            <label>
-              结束时间
-              <input
-                type="datetime-local"
-                value={end}
-                onChange={(event) => setEnd(event.target.value)}
-                required
-              />
-            </label>
+            )}
+          </aside>
+        </div>
+      </main>
+      <DialogContent className="dialog-centered customer-sync-dialog">
+        <DialogHeading
+          title="同步客户"
+          description="更新所选时段内的客户分级、负责人和关联群。已有事件不受影响。"
+        />
+        <form className="customer-sync-form" onSubmit={submit}>
+          <label>
+            开始时间
+            <input
+              type="datetime-local"
+              value={start}
+              onChange={(event) => setStart(event.target.value)}
+              required
+            />
+          </label>
+          <label>
+            结束时间
+            <input
+              type="datetime-local"
+              value={end}
+              onChange={(event) => setEnd(event.target.value)}
+              required
+            />
+          </label>
+          {invalidRange && (
+            <p className="customer-form-hint" role="alert">
+              结束时间必须晚于开始时间，且相隔不超过一天。
+            </p>
+          )}
+          <div className="customer-sync-actions">
+            <span>上海时间 · 一次最多同步一天</span>
             <Button
               type="submit"
               variant="primary"
@@ -643,80 +670,74 @@ export default function CustomersPage() {
             >
               {busy ? '同步进行中' : '开始同步'}
             </Button>
-            {invalidRange && (
-              <p className="customer-form-hint">
-                请选择开始早于结束、且不超过一天的范围。
+          </div>
+        </form>
+        {submitError && <ErrorNotice message={submitError} />}
+        <aside className="customer-sync-panel" aria-label="客户同步记录">
+          <h2>同步记录</h2>
+          <p className="customer-muted">窗口内未出现的客户和群会继续保留。</p>
+          {syncs.error && (
+            <ErrorNotice message={syncs.error} retry={syncs.refresh} />
+          )}
+          <div className="customer-sync-list">
+            {syncs.data?.items.map((item) => (
+              <button
+                key={item.run_id}
+                type="button"
+                aria-pressed={runId === item.run_id}
+                className={runId === item.run_id ? 'selected' : ''}
+                onClick={() => select('sync', item.run_id)}
+              >
+                <strong>{statuses[item.status]}</strong>
+                <span>
+                  {item.completed_windows} / {item.total_windows} 个时段
+                </span>
+                <small>{formatTime(item.created_at)}</small>
+              </button>
+            ))}
+          </div>
+          {syncs.data?.total === 0 && (
+            <p className="customer-empty">还没有同步记录。</p>
+          )}
+          {detail.error && (
+            <ErrorNotice message={detail.error} retry={detail.refresh} />
+          )}
+          {run && (
+            <section className="customer-sync-detail" aria-label="同步详情">
+              <h3>{statuses[run.status]}</h3>
+              <p>
+                {formatTime(run.request.start)} — {formatTime(run.request.end)}
               </p>
-            )}
-          </form>
-          {submitError && <ErrorNotice message={submitError} />}
-          <aside className="customer-sync-panel" aria-label="客户同步记录">
-            <h2>同步记录</h2>
-            <p className="customer-muted">窗口内未出现的客户和群会继续保留。</p>
-            {syncs.error && (
-              <ErrorNotice message={syncs.error} retry={syncs.refresh} />
-            )}
-            <div className="customer-sync-list">
-              {syncs.data?.items.map((item) => (
-                <button
-                  key={item.run_id}
-                  type="button"
-                  aria-pressed={runId === item.run_id}
-                  className={runId === item.run_id ? 'selected' : ''}
-                  onClick={() => select('sync', item.run_id)}
-                >
-                  <strong>{statuses[item.status]}</strong>
-                  <span>
-                    {item.completed_windows} / {item.total_windows} 个时段
-                  </span>
-                  <small>{formatTime(item.created_at)}</small>
-                </button>
-              ))}
-            </div>
-            {syncs.data?.total === 0 && (
-              <p className="customer-empty">还没有同步记录。</p>
-            )}
-            {detail.error && (
-              <ErrorNotice message={detail.error} retry={detail.refresh} />
-            )}
-            {run && (
-              <section className="customer-sync-detail" aria-label="同步详情">
-                <h3>{statuses[run.status]}</h3>
-                <p>
-                  {formatTime(run.request.start)} —{' '}
-                  {formatTime(run.request.end)}
-                </p>
-                <progress
-                  aria-label="客户同步进度"
-                  value={run.completed_windows}
-                  max={Math.max(1, run.total_windows)}
-                />
-                <p>
-                  {run.completed_windows} / {run.total_windows} 个时段已保存
-                </p>
-                <dl>
-                  <div>
-                    <dt>新增客户</dt>
-                    <dd>{totals.newCustomers}</dd>
-                  </div>
-                  <div>
-                    <dt>刷新客户</dt>
-                    <dd>{totals.refreshed}</dd>
-                  </div>
-                  <div>
-                    <dt>待确认群次</dt>
-                    <dd>{totals.reviews}</dd>
-                  </div>
-                </dl>
-                {run.error && <ErrorNotice message={run.error} />}
-                <small>
-                  计数来自本次已保存结果。待确认群可能在多个时段重复出现。
-                </small>
-              </section>
-            )}
-          </aside>
-        </DialogContent>
-      </Dialog>
-    </main>
+              <progress
+                aria-label="客户同步进度"
+                value={run.completed_windows}
+                max={Math.max(1, run.total_windows)}
+              />
+              <p>
+                {run.completed_windows} / {run.total_windows} 个时段已保存
+              </p>
+              <dl>
+                <div>
+                  <dt>新增客户</dt>
+                  <dd>{totals.newCustomers}</dd>
+                </div>
+                <div>
+                  <dt>刷新客户</dt>
+                  <dd>{totals.refreshed}</dd>
+                </div>
+                <div>
+                  <dt>待确认群次</dt>
+                  <dd>{totals.reviews}</dd>
+                </div>
+              </dl>
+              {run.error && <ErrorNotice message={run.error} />}
+              <small>
+                计数来自本次已保存结果。待确认群可能在多个时段重复出现。
+              </small>
+            </section>
+          )}
+        </aside>
+      </DialogContent>
+    </Dialog>
   );
 }

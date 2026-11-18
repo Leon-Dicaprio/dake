@@ -1,7 +1,7 @@
 import {
   Activity,
   Bot,
-  Layers3,
+  Inbox,
   Menu,
   PanelLeftClose,
   UsersRound,
@@ -30,7 +30,7 @@ export default function Workspace() {
   const navigation = (
     <nav className="main-nav" aria-label="工作台导航">
       <NavLink to="/events" onClick={() => setOpen(false)}>
-        <Layers3 size={17} />
+        <Inbox size={17} />
         工作台
       </NavLink>
       <NavLink to="/customers" onClick={() => setOpen(false)}>
@@ -50,7 +50,21 @@ export default function Workspace() {
   const brand = (
     <Link to="/events" className="brand" onClick={() => setOpen(false)}>
       <span className="brand-symbol">
-        <Layers3 size={20} strokeWidth={1.8} />
+        <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
+          <path d="M4 4h23v15H14l-6 5v-5H4z" fill="currentColor" />
+          <path
+            d="M15 23h12l4 4V12"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinejoin="round"
+          />
+          <path
+            d="M9 10h13M9 14h8"
+            stroke="var(--nav-ink)"
+            strokeWidth="2"
+            strokeLinecap="round"
+          />
+        </svg>
       </span>
       <span>大客售后</span>
     </Link>

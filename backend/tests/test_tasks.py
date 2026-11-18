@@ -53,6 +53,9 @@ class MemoryTasks:
     def execution(self, eid):
         return deepcopy(self.history.get(eid))
 
+    def execution_heads(self, tid, *, limit=100):
+        return [{k: v for k, v in row.items() if k != "state"} for row in self.executions(tid)[:limit]]
+
     def start_execution(self, tid, state, automatic=False):
         if self.executions(tid, active=True):
             raise RunConflict()
@@ -77,6 +80,9 @@ class MemoryRuns:
 
     def get(self, rid, **kwargs):
         return deepcopy(self.items.get(rid))
+
+    def progress_rows(self, run_ids, *, include_cycles=False):
+        return {rid: deepcopy(self.items[rid]) for rid in run_ids if rid in self.items}
 
     def create(self, request, total, run_id=None):
         if run_id in self.items:
@@ -333,6 +339,39 @@ def test_empty_window_uses_receipt_job_and_waits_when_caught_up(service):
     service.clock = lambda: NOW + timedelta(minutes=15)
     service.tick(force=True)
     assert len(service.tasks.history) == 2
+
+
+def test_initial_empty_window_does_not_skip_later_messages(service):
+    """首窗为空仍保留客户，后续来源窗口出现消息时继续按序排入分析。"""
+    service.runs.pending_messages = lambda *args: []
+    _, eid = automatic(service, scope="selected", uids=["555001"])
+    state = sync_done(service, eid)["state"]
+    child = next(c for c in state["children"] if c["uid"] == "555001")
+    first = service.runs.get(child["run_id"])
+    assert first and first["request"]["start"] == "2026-11-16T10:00:00+08:00"
+    service.runs.finish(first["run_id"])
+    service.runs.finish(state["sync_run_id"])
+    service.runs.pending_messages = lambda *args: [SimpleNamespace(
+        conversation_id="synthetic-group", sent_at=bound("2026-11-16T10:16:00+08:00"))]
+    service.tick(force=True)
+    child = next(c for c in service.tasks.execution(eid)["state"]["children"] if c["uid"] == "555001")
+    second = service.runs.get(child["run_id"])
+    assert second and second["request"]["start"] == "2026-11-16T10:15:00+08:00"
+
+
+def test_source_failure_resumes_after_already_completed_customer_window(service):
+    """来源先失败时仍核对成功子任务，重启编排不会重复提交已完成的分析窗口。"""
+    task, eid = automatic(service, scope="selected", uids=["555001"])
+    state = sync_done(service, eid)["state"]
+    child = next(c for c in state["children"] if c["uid"] == "555001")
+    service.runs.finish(child["run_id"])
+    service.runs.finish(state["sync_run_id"], "合成取数失败")
+    service.tick(force=True)
+    assert service.tasks.execution(eid)["status"] == "failed"
+    service.runs.pending_messages = lambda *args: []
+    service.action(task["task_id"], "run")
+    latest = service.tasks.executions(task["task_id"])[0]
+    assert latest["state"]["customer_cursors"]["555001"] == "2026-11-16T10:15:00+08:00"
 
 
 def test_unconfirmed_transaction_remains_blocked_after_restart_and_next_timer(service):

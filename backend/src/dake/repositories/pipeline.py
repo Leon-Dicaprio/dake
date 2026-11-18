@@ -212,7 +212,9 @@ class PipelineRepository(RunRepository):
                         raise PipelineError("抓取水位不能跳过未完成区间")
                 store._execute("""INSERT INTO source_windows
                     (fetch_id,source,window_start,window_end,status,message_count,isolated_count,created_at,finished_at)
-                    VALUES (%s,'official_chat',%s,%s,'complete',%s,%s,NOW(6),NOW(6))""",
+                    VALUES (%s,'official_chat',%s,%s,'complete',%s,%s,NOW(6),NOW(6))
+                    ON DUPLICATE KEY UPDATE status='complete', message_count=VALUES(message_count),
+                    isolated_count=VALUES(isolated_count), finished_at=NOW(6), error_reason=NULL""",
                     (str(uuid4()), start, end, message_count, isolated_count))
         return True
 

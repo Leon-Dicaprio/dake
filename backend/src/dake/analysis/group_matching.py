@@ -12,9 +12,10 @@ from .continuity import validate_continuity, ContinuityActionConflict
 MATCH_FIELDS = ("产品", "资源标识", "操作", "环境")
 GROUP_POLICY = """
 history_retrieval.scope=conversation 时，只处理这个群的事项，跨群事件关联由另一模块负责。
+分类标签变化不改变事件身份；明确引用同一事项后，可依据新事实增减标签、调整主标签。
 明确业务事项按事项拆分；不要把一条消息中的不同事项混成一个候选。
-沿用 attributes 表达匹配对象，可使用 产品、资源标识、操作、环境。
-只在有逐字原文依据时填写，缺失不猜测；请求号、订单号不自动视为唯一事项编号。
+分类及专属事实沿用 type_labels、typed_attributes，状态与优先级沿用对应 proposal；缺失不猜测。
+历史 matching 中的产品、资源标识、操作、环境仅供核对已知对象，不要求填回旧 attributes；请求号、订单号不自动视为唯一事项编号。
 显式 event_id 或完整 message_id 是程序可核验的引用；同产品、同资源、同群或时间相近都不证明同一事项。
 仅重复旧事实时返回 duplicate，业务结果归为非业务/无需推进，不更新事件。
 关键词零命中不证明独立新建；检索不完整或引用无法定位时返回 review。
@@ -32,7 +33,7 @@ new 表示首次纳入本系统跟进，不表示问题刚刚发生。首次接�
 
 def group_matching_version():
     """冻结本群程序规则及模型补充约定，代码规则变化时同步递增版本。"""
-    return "conversation-matching-v3-" + hashlib.sha256(GROUP_POLICY.encode()).hexdigest()[:16]
+    return "conversation-matching-v4-" + hashlib.sha256(GROUP_POLICY.encode()).hexdigest()[:16]
 
 
 def constrain(candidate, *, retrieval, available, eligible):
@@ -77,8 +78,6 @@ def constrain(candidate, *, retrieval, available, eligible):
         reason = "明确引用无法唯一定位本群旧事件"
     elif target and candidate.referenced_event_id not in (None, target):
         reason = "模型更新目标与原文明确引用冲突"
-    elif target and visible[target].type != candidate.type:
-        reason = "明确引用与本事项类型冲突"
     elif candidate.decision == "new" and not candidate.continuity and target and not candidate.ambiguous:
         # 原文也可能在说“与该事件无关”；文本编号不是权威绑定，不能强行改成更新。
         reason = "新建建议包含明确旧事件引用，需确认是延续还是对照"

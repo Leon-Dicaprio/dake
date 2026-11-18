@@ -2,10 +2,13 @@ import { expect, type Page, test } from '@playwright/test';
 
 const stamp = '2038-06-01T09:00:00+08:00';
 /** 自造数据验证交互，写请求全部拦截。 */
-async function fixture(page: Page, initiallyEmpty = false) {
+async function fixture(page: Page, initiallyEmpty = false, historical = false) {
   const writes: Record<string, unknown>[] = [];
   let fail = false;
   let hasEvents = !initiallyEmpty;
+  const archive = 'xhub-v1-aaaaaaaaaaaaaaaaaaaa';
+  const savedStream = (uid: string) =>
+    historical && uid === '1383603926' ? archive : `stream-${uid}`;
   const message = {
     source: 'synthetic',
     message_id: 'm1',
@@ -21,7 +24,7 @@ async function fixture(page: Page, initiallyEmpty = false) {
     return {
       event_id: id,
       uid,
-      stream: `stream-${uid}`,
+      stream: savedStream(uid),
       topic_key: `测试事项${id}`,
       type: '排障',
       summary: `测试摘要${id}`,
@@ -79,7 +82,9 @@ async function fixture(page: Page, initiallyEmpty = false) {
               label: '测试客户1383603926',
               stream: 'stream-1383603926',
               message_count: 10,
-              event_count: hasEvents ? 2 : 0,
+              event_count: hasEvents && !historical ? 2 : 0,
+              archived_event_counts:
+                hasEvents && historical ? { [archive]: 2 } : {},
               level: 'L9',
               level_state: 'fresh',
               segment: 'large',
@@ -107,11 +112,13 @@ async function fixture(page: Page, initiallyEmpty = false) {
       });
     if (url.pathname.endsWith('/events')) {
       const uid = url.searchParams.get('uid') || '';
-      const items = !hasEvents
-        ? []
-        : uid === '555002'
-          ? [event('C', uid)]
-          : [event('A', uid), event('B', uid)];
+      const items =
+        !hasEvents ||
+        (historical && url.searchParams.get('stream') !== savedStream(uid))
+          ? []
+          : uid === '555002'
+            ? [event('C', uid)]
+            : [event('A', uid), event('B', uid)];
       return route.fulfill({ json: { items, total: items.length } });
     }
     if (url.pathname.endsWith('/runs'))
@@ -138,6 +145,23 @@ test('首次产出事件后，全部客户工作台在下次刷新中展示', as
   await expect(page.locator('.event-rows > li')).toHaveCount(3, {
     timeout: 8000,
   });
+  expect(state.writes).toEqual([]);
+});
+
+test('当前与历史事件都可查看，旧版本仅供核对', async ({ page }) => {
+  const state = await fixture(page, false, true);
+  await page.goto('/events');
+  await expect(page.locator('.event-rows > li')).toHaveCount(3);
+  await page.getByRole('button', { name: /测试事项A/ }).click();
+  await expect(
+    page.getByText('历史分析 · 只读', { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: '人工纠偏' })).toHaveCount(0);
+  await page.getByRole('button', { name: '只看该客户' }).click();
+  await expect(page.locator('.event-rows > li')).toHaveCount(2);
+  await page.getByLabel('客户范围').selectOption('555002');
+  await expect(page.locator('.event-chat-title')).toHaveText('测试事项C');
+  await expect(page.getByRole('button', { name: '人工纠偏' })).toBeVisible();
   expect(state.writes).toEqual([]);
 });
 test('切换、搜索、原文定位与客户隔离', async ({ page }) => {
@@ -179,6 +203,78 @@ test('切换、搜索、原文定位与客户隔离', async ({ page }) => {
     ),
   ).toBe(true);
 });
+test('Esc 先关闭浮层，保留选中的事件并将焦点还给入口', async ({ page }) => {
+  const state = await fixture(page);
+  await page.goto('/events?event=B');
+  const title = page.locator('.event-chat-title');
+  await expect(title).toHaveText('测试事项B');
+  for (const trigger of [
+    page.getByRole('button', { name: /^时间范围：/ }),
+    page.getByRole('button', { name: '筛选', exact: true }),
+    page.getByRole('button', { name: '切换客户' }),
+    page.getByRole('button', { name: '变化面板' }),
+  ]) {
+    await trigger.click();
+    await expect(page.getByRole('dialog')).toBeInViewport();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    await expect(title).toHaveText('测试事项B');
+    expect(new URL(page.url()).searchParams.get('event')).toBe('B');
+  }
+  await page.keyboard.press('Escape');
+  await expect(title).toHaveCount(0);
+  expect(state.writes).toEqual([]);
+});
+
+test('事件筛选保留在链接中；清除四项筛选时保留客户搜索', async ({ page }) => {
+  const state = await fixture(page);
+  await page.goto('/events?uid=all');
+  await expect(page.locator('.event-rows > li')).toHaveCount(3);
+  await page.getByLabel('搜索事件').fill('测试客户555002');
+  await expect(page.locator('.event-rows > li')).toHaveCount(1);
+  await page.getByRole('button', { name: '筛选', exact: true }).click();
+  const panel = page.getByRole('dialog', { name: '筛选事件' });
+  await panel.getByRole('combobox', { name: '优先级' }).selectOption('P1');
+  await panel.getByRole('combobox', { name: '事件类型' }).selectOption('排障');
+  await expect(page).toHaveURL(/priority=P1/);
+  await page.reload();
+  await page.getByRole('button', { name: /筛选.*2/ }).click();
+  await expect(panel.getByLabel('优先级')).toHaveValue('P1');
+  await expect(panel.getByLabel('事件类型')).toHaveValue('排障');
+  await panel.getByRole('button', { name: '清除条件' }).click();
+  await expect(panel.getByLabel('优先级')).toHaveValue('');
+  await expect(panel.getByLabel('事件类型')).toHaveValue('');
+  await page.keyboard.press('Escape');
+  await expect(page.getByLabel('搜索事件')).toHaveValue('测试客户555002');
+  await expect(page.locator('.event-chat-title')).toHaveText('测试事项C');
+  expect(state.writes).toHaveLength(0);
+});
+
+test('客户同步起止时间和提交入口在视口内，取消后可继续浏览客户', async ({
+  page,
+}) => {
+  const state = await fixture(page);
+  await page.route('**/api/v1/customers**', (route) =>
+    route.request().method() === 'GET'
+      ? route.fulfill({ json: { items: [], total: 0 } })
+      : route.abort(),
+  );
+  await page.goto('/customers');
+  const trigger = page.getByRole('button', { name: '同步客户', exact: true });
+  await trigger.click();
+  const dialog = page.getByRole('dialog', { name: '同步客户' });
+  await expect(dialog.getByLabel('开始时间')).toBeInViewport({ ratio: 1 });
+  await expect(dialog.getByLabel('结束时间')).toBeInViewport({ ratio: 1 });
+  await expect(dialog.getByRole('button', { name: '开始同步' })).toBeInViewport(
+    { ratio: 1 },
+  );
+  await dialog.getByRole('button', { name: '关闭' }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  expect(state.writes).toEqual([]);
+});
+
 test('工作台只保留任务中心入口，旧链接跳转且不提交任务', async ({ page }) => {
   const state = await fixture(page);
   await page.goto('/events');

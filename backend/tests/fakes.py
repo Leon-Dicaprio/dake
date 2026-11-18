@@ -15,7 +15,12 @@ class MemoryStore:
         self.processed = {}
         self.attributions = {}
         self.group_links = {}
+        self.profiles = {}
         self._uid = None
+
+    def customer_profile(self, uid):
+        profile = self.profiles.get(uid)
+        return deepcopy(profile) if profile is not None else None
 
     def init_schema(self):
         pass

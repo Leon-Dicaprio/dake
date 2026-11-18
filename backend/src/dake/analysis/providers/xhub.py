@@ -21,7 +21,7 @@ import httpx
 from ...config import DEFAULT_ENV_FILE, Settings
 from ...domain.models import Event, Message, message_order, parse_time
 from ...repositories.local_state import private_json
-from ..contract import ContractError, ExtractionOutput, parse_output
+from ..contract import ContractError, ExtractionOutput, parse_output, strict_schema
 from ..attribution import ATTRIBUTION_POLICY, AttributionOutput, attribution_version, parse_attribution_output
 
 PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "event_extraction_v1.txt"
@@ -62,9 +62,10 @@ class XHubConfig:
 
 
 def xhub_identity(model: str, response_format: str, max_tokens: int) -> dict:
-    """根据模型、提示词与合约生成稳定处理流，普通重跑不会重新消费旧消息。"""
+    """根据模型、提示词与严格合约生成稳定处理流，普通重跑不会重新消费旧消息。"""
     prompt_hash = hashlib.sha256(PROMPT_PATH.read_bytes()).hexdigest()
-    schema_hash = hashlib.sha256(json.dumps(ExtractionOutput.model_json_schema(), sort_keys=True).encode()).hexdigest()
+    schema = strict_schema(ExtractionOutput.model_json_schema())
+    schema_hash = hashlib.sha256(json.dumps(schema, sort_keys=True).encode()).hexdigest()
     signature = hashlib.sha256(f"{model}:{prompt_hash}:{schema_hash}:{response_format}:{max_tokens}".encode()).hexdigest()[:20]
     return dict(stream=f"xhub-v1-{signature}", prompt_hash=prompt_hash, schema_hash=schema_hash)
 
@@ -94,7 +95,7 @@ class XHubProvider:
             raise XHubError("结构纠正最多允许一次")
         self.repair_attempts = repair_attempts
         self.prompt = PROMPT_PATH.read_text(encoding="utf-8")
-        schema = ExtractionOutput.model_json_schema()
+        schema = strict_schema(ExtractionOutput.model_json_schema())
         self.schema = schema
         self.prompt_hash = hashlib.sha256(self.prompt.encode()).hexdigest()
         self.schema_hash = hashlib.sha256(json.dumps(schema, sort_keys=True).encode()).hexdigest()
@@ -136,7 +137,7 @@ class XHubProvider:
             raise XHubError("历史候选不属于当前客户或分析流")
         self.history_retrieval = result
         self.history_context = None
-        self.schema = AttributionOutput.model_json_schema()
+        self.schema = strict_schema(AttributionOutput.model_json_schema())
         self.schema_hash = hashlib.sha256(json.dumps(self.schema, sort_keys=True).encode()).hexdigest()
 
     def configure_history_context(self, result):
@@ -152,7 +153,6 @@ class XHubProvider:
         uids = {message.uid for message in all_messages}
         self._check_input(all_messages, events)
         start, end = min(m.sent_at for m in new_messages), max(m.sent_at for m in new_messages)
-        # 当前窗口的未来边界由公共增量服务保证；迟到新增消息可以早于已处理上下文。
         history = self.history_retrieval
         if history is not None:
             if history.conversation is not None and any(
@@ -164,14 +164,24 @@ class XHubProvider:
                 raise XHubError("历史候选与当前输入批次不一致")
             existing_values = [candidate.to_input() for candidate in history.candidates]
         else:
-            # 兼容直接调用 Provider 的旧入口；正式增量服务始终配置历史检索通路。
             visible = [event for event in events
                        if max(start - event.end_time, event.start_time - end) <= self.settings.match_window
                        and (event.closed_at is None or end - event.closed_at <= self.settings.closed_grace)]
-            existing_values = [dict(event_id=e.event_id, type=e.type, topic_key=e.topic_key,
-                                    start_time=e.start_time.isoformat(), end_time=e.end_time.isoformat(),
-                                    summary=e.summary, status=e.status, severity=e.severity,
-                                    assignees=e.assignees) for e in visible]
+            existing_values = [dict(
+                event_id=e.event_id,
+                type=e.type,
+                types=e.types,
+                classification_status=e.classification_status,
+                topic_key=e.topic_key,
+                start_time=e.start_time.isoformat(),
+                end_time=e.end_time.isoformat(),
+                summary=e.summary,
+                status=e.lifecycle_status,
+                waiting_reason=e.waiting_reason,
+                resolution=e.resolution,
+                priority=e.priority,
+                assignees=e.assignees,
+            ) for e in visible]
 
         def message_value(message):
             return dict(id=message.key, send_time=message.sent_at.isoformat(),
@@ -236,13 +246,10 @@ class XHubProvider:
                 repair = [
                     {"role": "assistant", "content": self.traces[-1]["output"]},
                     {"role": "user", "content": (
-                        f"上一次 JSON 未通过程序校验：{error}。请仅修正格式、重复属性名称或不合法证据；"
+                        f"上一次 JSON 未通过程序校验：{error}。请仅修正格式、枚举约束、重复属性名或不合法证据；"
                         "仍以最初提供的消息和事件为事实依据，保留有效事件，不新增猜测。"
-                        "同一属性列表的 name 必须唯一；value 和 quote 必须符合逐字摘录要求。"
-                        "逐一处理反馈中列出的所有字段位置。依据只摘取所需的短句或连续片段，"
-                        "不要改写引文里的数字、标识符、键名或错误码，也不要拼接不连续原文。"
-                        "字段值没有逐字依据时保持未知，不能修改引文来迁就字段值。"
-                        "返回完整的修正后 JSON。"
+                        "typed_attributes 的 value 必须逐字来自连续 quote；status_proposal 和 priority_proposal 的 quote 必须是对应消息的连续子串。"
+                        "逐一处理反馈中列出的所有字段位置，返回完整的修正后 JSON。"
                     )},
                 ]
 
@@ -310,6 +317,7 @@ class XHubProvider:
             normalizations = []
             candidates = parser(content, new_messages, context, visible_events,
                 **({"normalizations": normalizations,
+                    "require_type_labels": True,
                     "history_items": payload.get("history_context", {}).get("items", [])}
                    if self.history_retrieval is not None else {}))
             trace["normalizations"] = normalizations

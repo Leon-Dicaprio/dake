@@ -22,6 +22,33 @@ history_retrieval.incomplete 为 true 表示预算、版本或快照限制导致
 """
 
 _WORDS = re.compile(r"[\u3400-\u9fff]+|[a-zA-Z0-9][a-zA-Z0-9_.-]*")
+SAME_GROUP_RECALL_WINDOW = timedelta(hours=24)
+ACTIVE_CONTINUITY_RECALL_WINDOW = timedelta(hours=6)
+
+
+def _event_conversation_ids(event: Event) -> set[str]:
+    """从快照已保存的证据及引用元数据提取关联群号，不额外回查消息表。"""
+    convs: set[str] = set()
+    for item in event.evidence or []:
+        cid = item.get("conversation_id") if isinstance(item, dict) else None
+        if cid:
+            convs.add(cid)
+    for facts in (event.type_evidence or {}).values():
+        for fact in facts or []:
+            for ref in (fact.get("evidence_refs") or []) if isinstance(fact, dict) else []:
+                if ref.get("conversation_id"):
+                    convs.add(ref["conversation_id"])
+    for detail in (event.status_detail, event.priority_detail):
+        if isinstance(detail, dict):
+            for ref in detail.get("evidence_refs") or []:
+                if isinstance(ref, dict) and ref.get("conversation_id"):
+                    convs.add(ref["conversation_id"])
+    for cont in (event.recovery, event.recurrence_of):
+        if isinstance(cont, dict):
+            for ref in cont.get("evidence") or []:
+                if isinstance(ref, dict) and ref.get("conversation_id"):
+                    convs.add(ref["conversation_id"])
+    return convs
 
 
 def _clues(messages, limits):
@@ -60,12 +87,17 @@ class HistoryCandidate:
     evidence_refs: tuple[dict, ...] = field(default=(), repr=False)
 
     def to_input(self):
-        """模型仅获得有预算的概述、身份、时间、状态和引用线索。"""
+        """模型仅获得有预算的概述、多标签、状态、优先级和引用线索，不塞入全量引文或人工锁历史。"""
         event = self.event
         recovery = event.recovery
-        return dict(event_id=event.event_id, type=event.type, topic_key=event.topic_key,
+        return dict(event_id=event.event_id, type=event.type,
+                    types=event.types or ([event.type] if event.type != "待分类" else []),
+                    classification_status=event.classification_status,
+                    topic_key=event.topic_key,
                     start_time=event.start_time.isoformat(), end_time=event.end_time.isoformat(),
-                    summary=event.summary, status=event.status, severity=event.severity,
+                    summary=event.summary, status=event.lifecycle_status,
+                    waiting_reason=event.waiting_reason, resolution=event.resolution,
+                    priority=event.priority, base_priority=event.base_priority,
                     assignees=event.assignees,
                     closed_at=event.closed_at.isoformat() if event.closed_at else None,
                     recovery=dict(confirmed_at=recovery["confirmed_at"], evidence_ids=[
@@ -147,6 +179,8 @@ class HistoryRetriever:
                   and any((r["source"], r.get("conversation_id")) == conversation for r in e.evidence)}
         event_refs, message_refs, keywords, result.clues_limited, result.reference_limited = _clues(messages, self.limits)
         recent_start = before - timedelta(days=self.limits.recent_days)
+        earliest_new = min(message.sent_at for message in messages)
+        active_convs = {message.conversation_id for message in messages if message.conversation_id}
         matches, seen = [], set()
 
         def consume(heads):
@@ -207,19 +241,37 @@ class HistoryRetriever:
                     event.recovery = None
                 evidence_ids = list(dict.fromkeys(f"{item['source']}:{item['message_id']}" for item in event.evidence))
                 facts = " ".join(f"{key} {value}" for key, value in event.attributes.items() if isinstance(value, str))
-                text = f"{event.topic_key or ''} {event.summary} {facts}".casefold()
+                labels = " ".join(event.types or [])
+                text = f"{event.topic_key or ''} {labels} {event.summary} {facts}".casefold()
                 hits = [word for word in keywords if word in text]
                 exact_event = event.event_id in event_refs
                 exact_message = any(key in evidence_ids for key in message_refs)
+                gap = earliest_new - event.end_time
+                event_convs = _event_conversation_ids(event)
+                same_group_recent = bool(
+                    active_convs
+                    and event_convs.intersection(active_convs)
+                    and timedelta(0) <= gap <= SAME_GROUP_RECALL_WINDOW
+                )
+                active_continuity = bool(
+                    event.closed_at is None
+                    and event.lifecycle_status not in {"已解决", "已取消"}
+                    and timedelta(0) <= gap <= ACTIVE_CONTINUITY_RECALL_WINDOW
+                )
                 # 本群模式保留预算内的语义候选，不能让“仍然慢”等短指代被词法零命中挡掉。
                 reasons = (["exact_event_id"] if exact_event else []) + (["exact_message_key"] if exact_message else [])
                 reasons += ["keyword:" + word for word in hits]
                 if not (exact_event or exact_message or hits):
                     reasons.append("conversation_candidate")
+                if same_group_recent:
+                    reasons.append("same_group_recent")
+                if active_continuity:
+                    reasons.append("active_continuity")
                 reasons.append("recent" if event.end_time >= recent_start else "older")
-                # 关闭与未关闭只影响候选排序，不在这里认定恢复、持续或复发。
+                # 精确与词法命中优先，其后保底纳入同群近期及近场未完结事项，避免口语指代漏召回。
                 rank = (-int(exact_event), -int(exact_message), event.end_time < recent_start,
-                        -len(hits), event.closed_at is not None, -event.end_time.timestamp(), event.event_id)
+                        -len(hits), -int(same_group_recent), event.closed_at is not None,
+                        -event.end_time.timestamp(), event.event_id)
                 event = deepcopy(event)
                 event.attributes = {key: value for key, value in event.attributes.items() if key in MATCH_FIELDS}
                 event.extensions, event.updated_by = {}, []

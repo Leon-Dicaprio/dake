@@ -15,6 +15,11 @@ from .routes.customers import router as customers_router
 from .routes.tasks import router as tasks_router
 from .routes.sender_rules import router as sender_rules_router
 from ..services.sender_rules import SenderRuleService
+from ..services.manual_decisions import (
+    ManualDecisionConflict,
+    ManualDecisionNotFound,
+    ManualDecisionService,
+)
 from ..repositories.tasks import TaskRepository
 from ..services.tasks import TaskService
 from ..repositories.customers import CustomerRepository
@@ -28,7 +33,8 @@ from ..services.queries import QueryService
 
 def create_app(settings: Settings, *, store_factory=MySQLStore, run_repository=None,
                runner=None, query_service=None, customer_repository=None,
-               task_repository=None, sender_rule_service=None, start_worker=True) -> FastAPI:
+               task_repository=None, sender_rule_service=None,
+               manual_decision_service=None, start_worker=True) -> FastAPI:
     """创建可测试的应用；仅导出 OpenAPI 时不会连接数据库或启动后台任务。"""
     runs = run_repository or RunRepository(settings, store_factory)
     worker = runner or RunRunner(settings, runs)
@@ -59,8 +65,16 @@ def create_app(settings: Settings, *, store_factory=MySQLStore, run_repository=N
     application = FastAPI(title="大客售后事件系统", version="0.2.0", lifespan=lifespan,
                           responses={400: {"model": ErrorResponse}, 409: {"model": ErrorResponse},
                                      422: {"model": ErrorResponse}, 503: {"model": ErrorResponse}})
-    application.state.services = AppServices(settings, queries, runs, worker, customers, task_service,
-        sender_rule_service or SenderRuleService(settings))
+    application.state.services = AppServices(
+        settings,
+        queries,
+        runs,
+        worker,
+        customers,
+        task_service,
+        sender_rule_service or SenderRuleService(settings),
+        manual_decision_service or ManualDecisionService(settings, store_factory),
+    )
     application.add_middleware(TrustedHostMiddleware, allowed_hosts=list(settings.api_allowed_hosts))
 
     @application.middleware("http")
@@ -101,6 +115,14 @@ def create_app(settings: Settings, *, store_factory=MySQLStore, run_repository=N
     @application.exception_handler(RunConflict)
     async def conflict(request, error):
         return JSONResponse({"detail": "该客户已有未结束任务，或等待队列已满"}, status_code=409)
+
+    @application.exception_handler(ManualDecisionConflict)
+    async def manual_conflict(request, error):
+        return JSONResponse({"detail": str(error) or "事件版本或人工操作冲突，请刷新后重试"}, status_code=409)
+
+    @application.exception_handler(ManualDecisionNotFound)
+    async def manual_not_found(request, error):
+        return JSONResponse({"detail": str(error) or "未找到目标事件或人工操作"}, status_code=404)
 
     @application.exception_handler(ValueError)
     async def invalid_value(request, error):

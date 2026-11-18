@@ -11,6 +11,7 @@ from ..repositories.customers import CustomerRepository
 from ..services.queries import QueryService
 from ..services.tasks import TaskService
 from ..services.sender_rules import SenderRuleService
+from ..services.manual_decisions import ManualDecisionService
 
 
 @dataclass
@@ -24,6 +25,7 @@ class AppServices:
     customers: CustomerRepository | None = None
     tasks: TaskService | None = None
     sender_rules: SenderRuleService | None = None
+    manual_decisions: ManualDecisionService | None = None
 
 
 def services(request: Request) -> AppServices:

@@ -33,10 +33,53 @@ declare namespace API {
     closed_grace: string;
     /** Event Types */
     event_types: string[];
+    /** Filter Event Types */
+    filter_event_types: string[];
+    /** Lifecycle Statuses */
+    lifecycle_statuses: string[];
+    /** Waiting Reasons */
+    waiting_reasons: string[];
+    /** Resolutions */
+    resolutions: string[];
+    /** Priorities */
+    priorities: string[];
     /** Provider */
     provider: "stub" | "xhub";
     /** Customers */
     customers: CustomerResponse[];
+  };
+
+  type ContextMessageResponse = {
+    /** Source */
+    source: string;
+    /** Message Id */
+    message_id: string;
+    /** Send Time */
+    send_time: string;
+    /** Excerpt */
+    excerpt: string;
+    /** Content */
+    content: string | null;
+    /** Digest */
+    digest: string | null;
+    /** Platform */
+    platform: string;
+    /** Platform Label */
+    platform_label: string;
+    /** Conversation Id */
+    conversation_id: string;
+    /** Conversation Name */
+    conversation_name: string;
+    /** Sender Name */
+    sender_name: string;
+    /** Internal Hint */
+    internal_hint: number | null;
+    /** Sender Role */
+    sender_role: "internal" | "support" | "customer" | "external" | "unknown";
+    /** Sender Kind */
+    sender_kind: "human" | "bot" | "unknown";
+    /** Is Evidence */
+    is_evidence: boolean;
   };
 
   type ContinuityEvidence = {
@@ -169,6 +212,8 @@ declare namespace API {
     message_count: number;
     /** Event Count */
     event_count: number;
+    /** Archived Event Counts 本客户历史分析版本的已保存事件数 */
+    archived_event_counts?: Record<string, any>;
     /** Stream */
     stream: string;
     /** Level */
@@ -365,6 +410,20 @@ declare namespace API {
     next_execution_offset: number | null;
   };
 
+  type EventContextResponse = {
+    /** Uid */
+    uid: string;
+    /** Stream */
+    stream: string;
+    /** Event Id */
+    event_id: string;
+    window: TimeWindow;
+    /** Items */
+    items: ContextMessageResponse[];
+    /** Truncated */
+    truncated: boolean;
+  };
+
   type EventExecution = {
     /** Attempt Id */
     attempt_id: string;
@@ -439,6 +498,20 @@ declare namespace API {
     stream: string;
     /** Type */
     type: string;
+    /** Types */
+    types: string[];
+    /** Type Evidence */
+    type_evidence: Record<string, any>;
+    /** Removed Types */
+    removed_types: Record<string, any>;
+    /** Classification Evidence Status */
+    classification_evidence_status: "已记录" | "未记录";
+    /** Classification Status */
+    classification_status: "已分类" | "待分类";
+    /** Other Reason */
+    other_reason: Record<string, any> | null;
+    /** Typed Attributes */
+    typed_attributes: Record<string, any>;
     /** Topic Key */
     topic_key: string | null;
     /** Start Time */
@@ -447,8 +520,29 @@ declare namespace API {
     end_time: string;
     /** Status */
     status: string;
+    /** Lifecycle Status */
+    lifecycle_status: "状态未明" | "跟进中" | "等待中" | "已解决" | "已取消";
+    /** Waiting Reason */
+    waiting_reason: "等待客户" | "等待内部支撑" | "等待其他方" | null;
+    /** Resolution */
+    resolution:
+      | "客户确认恢复"
+      | "支撑声明已修复"
+      | "已答复或已交付"
+      | "已拒绝"
+      | "已撤回"
+      | "确认不成立"
+      | null;
+    /** Status Detail */
+    status_detail: Record<string, any> | null;
     /** Severity */
     severity: string;
+    /** Priority */
+    priority: "P0" | "P1" | "P2" | "P3" | "待评估";
+    /** Base Priority */
+    base_priority: "P0" | "P1" | "P2" | "P3" | "待评估";
+    /** Priority Detail */
+    priority_detail: Record<string, any> | null;
     /** Summary */
     summary: string;
     /** Created On */
@@ -463,6 +557,14 @@ declare namespace API {
     extensions: Record<string, any>;
     /** Review Flag */
     review_flag: string | null;
+    /** Review Items */
+    review_items: Record<string, any>[];
+    /** Version */
+    version: number;
+    /** Manual Controls */
+    manual_controls: Record<string, any>;
+    /** Manual Operations */
+    manual_operations: ManualOperationResponse[];
     /** Closed At */
     closed_at: string | null;
     recovery: RecoveryConfirmation | null;
@@ -480,6 +582,8 @@ declare namespace API {
   type EventRevision = {
     /** Action */
     action: "created" | "updated";
+    /** Source */
+    source: "automatic" | "manual";
     /** Window Start */
     window_start: string;
     /** Window End */
@@ -498,6 +602,8 @@ declare namespace API {
       | "confirmation"
       | "correction"
       | "evidence_only"
+      | "classification"
+      | "manual"
       | null;
     /** Change Summary */
     change_summary: string | null;
@@ -507,6 +613,7 @@ declare namespace API {
     changed_fields: string[];
     /** Changes */
     changes: EventChange[];
+    manual_operation: ManualOperationResponse | null;
     /** Policy Version */
     policy_version: string | null;
   };
@@ -520,6 +627,20 @@ declare namespace API {
     stream: string;
     /** Type */
     type: string;
+    /** Types */
+    types: string[];
+    /** Type Evidence */
+    type_evidence: Record<string, any>;
+    /** Removed Types */
+    removed_types: Record<string, any>;
+    /** Classification Evidence Status */
+    classification_evidence_status: "已记录" | "未记录";
+    /** Classification Status */
+    classification_status: "已分类" | "待分类";
+    /** Other Reason */
+    other_reason: Record<string, any> | null;
+    /** Typed Attributes */
+    typed_attributes: Record<string, any>;
     /** Topic Key */
     topic_key: string | null;
     /** Start Time */
@@ -528,8 +649,29 @@ declare namespace API {
     end_time: string;
     /** Status */
     status: string;
+    /** Lifecycle Status */
+    lifecycle_status: "状态未明" | "跟进中" | "等待中" | "已解决" | "已取消";
+    /** Waiting Reason */
+    waiting_reason: "等待客户" | "等待内部支撑" | "等待其他方" | null;
+    /** Resolution */
+    resolution:
+      | "客户确认恢复"
+      | "支撑声明已修复"
+      | "已答复或已交付"
+      | "已拒绝"
+      | "已撤回"
+      | "确认不成立"
+      | null;
+    /** Status Detail */
+    status_detail: Record<string, any> | null;
     /** Severity */
     severity: string;
+    /** Priority */
+    priority: "P0" | "P1" | "P2" | "P3" | "待评估";
+    /** Base Priority */
+    base_priority: "P0" | "P1" | "P2" | "P3" | "待评估";
+    /** Priority Detail */
+    priority_detail: Record<string, any> | null;
     /** Summary */
     summary: string;
     /** Created On */
@@ -544,6 +686,14 @@ declare namespace API {
     extensions: Record<string, any>;
     /** Review Flag */
     review_flag: string | null;
+    /** Review Items */
+    review_items: Record<string, any>[];
+    /** Version */
+    version: number;
+    /** Manual Controls */
+    manual_controls: Record<string, any>;
+    /** Manual Operations */
+    manual_operations: ManualOperationResponse[];
     /** Closed At */
     closed_at: string | null;
     recovery: RecoveryConfirmation | null;
@@ -738,8 +888,23 @@ declare namespace API {
     include_details?: boolean;
   };
 
+  type getEventContextParams = {
+    event_id: string;
+    uid?: string | null;
+    stream?: string | null;
+    padding_minutes?: number;
+    limit?: number;
+  };
+
   type getEventParams = {
     event_id: string;
+    uid?: string | null;
+    stream?: string | null;
+  };
+
+  type getManualDecisionParams = {
+    event_id: string;
+    operation_id: string;
     uid?: string | null;
     stream?: string | null;
   };
@@ -779,6 +944,8 @@ declare namespace API {
     uid?: string | null;
     stream?: string | null;
     type?: string | null;
+    status?: string | null;
+    priority?: string | null;
   };
 
   type listRunsParams = {
@@ -789,6 +956,84 @@ declare namespace API {
 
   type listTaskExecutionsParams = {
     task_id: string;
+  };
+
+  type ManualControlResponse = {
+    /** Field */
+    field: "types" | "status" | "priority" | "assignees";
+    /** Locked */
+    locked: boolean;
+    /** Operator */
+    operator: string | null;
+    /** Reason */
+    reason: string | null;
+    /** Decided At */
+    decided_at: string | null;
+    adopted_value: JsonValue | null;
+    /** Pending Conflict */
+    pending_conflict: Record<string, any> | null;
+  };
+
+  type ManualDecisionRequest = {
+    /** Uid */
+    uid: string;
+    /** Stream */
+    stream: string;
+    /** Expected Version */
+    expected_version: number;
+    /** Operation Id */
+    operation_id: string;
+    /** Operator */
+    operator: string;
+    /** Reason */
+    reason: string;
+    /** Actions */
+    actions: ManualFieldAction[];
+  };
+
+  type ManualDecisionResponse = {
+    event: EventResponse;
+    operation: ManualOperationResponse;
+    /** Idempotent Replay */
+    idempotent_replay: boolean;
+  };
+
+  type ManualFieldAction = {
+    /** Field */
+    field: "types" | "status" | "priority" | "assignees";
+    /** Action */
+    action: "set" | "lock" | "unlock" | "adopt_conflict" | "dismiss_conflict";
+    /** Types */
+    types?: string[] | null;
+    /** Status */
+    status?: string | null;
+    /** Waiting Reason */
+    waiting_reason?: string | null;
+    /** Resolution */
+    resolution?: string | null;
+    /** Priority */
+    priority?: string | null;
+    /** Assignees */
+    assignees?: string[] | null;
+    /** Locked */
+    locked?: boolean | null;
+  };
+
+  type ManualOperationResponse = {
+    /** Operation Id */
+    operation_id: string;
+    /** Request Digest */
+    request_digest: string;
+    /** Operator */
+    operator: string;
+    /** Reason */
+    reason: string;
+    /** Decided At */
+    decided_at: string;
+    /** Version */
+    version: number;
+    /** Actions */
+    actions: Record<string, any>[];
   };
 
   type NormalizedRunRequest = {
@@ -1053,6 +1298,10 @@ declare namespace API {
     /** Rule Id */
     rule_id?: string | null;
     rule: SenderRule;
+  };
+
+  type submitManualDecisionParams = {
+    event_id: string;
   };
 
   type TaskAction = {

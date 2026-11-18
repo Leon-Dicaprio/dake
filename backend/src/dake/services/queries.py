@@ -2,14 +2,18 @@
 
 from contextlib import contextmanager
 from datetime import timedelta
+import re
 
 from ..analysis.providers.xhub import configured_stream
 from ..domain.customer_policy import customer_segment, is_super_large
-from ..domain.models import EVENT_TYPES, parse_time
+from ..domain.manual_controls import is_locked
+from ..domain.models import EVENT_LABELS, EVENT_TYPES, PENDING_TYPE, message_order, parse_time
+from ..domain.priority_policy import PRIORITIES, apply_customer_tier, event_priority_sort_key
+from ..domain.status_policy import LIFECYCLE_STATUSES, RESOLUTIONS, WAITING_REASONS
 from ..ingestion.client import validate_uid
 from ..repositories.mysql import MySQLStore, StorageError
 from ..repositories.attempts import AttemptRepository
-from .enrich import enrich_events
+from .enrich import enrich_event, enrich_events, enrich_evidence
 from .event_changes import event_changes
 from .execution_changes import execution_changes
 from .sender_identity import load_sender_roles
@@ -42,20 +46,32 @@ class QueryService:
             store.close()
 
     def scope(self, uid=None, stream=None):
-        """查询限定客户及当前分析版本，不能跨范围读取事件。"""
+        """缺省读取当前版本；显式历史版本也必须按原客户、原分析流查询。"""
         uid = uid or self.settings.uid
         validate_uid(uid)
         expected = configured_stream(self.settings)
-        if stream is not None and stream != expected:
+        if stream is not None and stream != expected and not self._historical_stream(stream):
             raise ValueError("客户与分析流不匹配")
-        return uid, expected
+        return uid, stream or expected
+
+    def _historical_stream(self, stream):
+        """真实工作台只展示正式 XHub 分析版本，隔离其他来源和实验。"""
+        return self.settings.provider == "xhub" and re.fullmatch(r"xhub-v1-[0-9a-f]{20}", stream) is not None
 
     def config(self):
         """返回公开缺省及真实计数，不泄露数据库或网络凭据。"""
         customers = []
         stream = configured_stream(self.settings)
         with self.connection() as store:
-            rows, _ = store._execute("SELECT DISTINCT uid FROM messages WHERE source='official_chat' ORDER BY uid")
+            rows, _ = store._execute(
+                "SELECT uid,COUNT(*) AS total FROM messages WHERE source='official_chat' GROUP BY uid ORDER BY uid")
+            message_counts = {row["uid"]: row["total"] for row in rows}
+            event_rows, _ = store._execute(
+                "SELECT uid,stream,COUNT(*) AS total,MAX(end_time) AS latest_end FROM events GROUP BY uid,stream")
+            event_versions = {}
+            for row in event_rows:
+                if row["stream"] == stream or self._historical_stream(row["stream"]):
+                    event_versions.setdefault(row["uid"], {})[row["stream"]] = row
             profiles_by_uid = {}
             groups_by_uid = {}
             try:
@@ -77,28 +93,20 @@ class QueryService:
             except StorageError:
                 profiles_by_uid = {}
                 groups_by_uid = {}
-            official_uids = []
-            for row in rows:
-                if row["uid"] not in official_uids:
-                    official_uids.append(row["uid"])
+            official_uids = list(message_counts)
             for uid, profile in profiles_by_uid.items():
                 if uid not in official_uids and customer_segment(profile.get("level"), profile.get("level_state")) == "large":
                     official_uids.append(uid)
             for uid in official_uids:
                 label = f"客户 {uid}"
-                msg_rows, _ = store._execute(
-                    "SELECT COUNT(*) AS total FROM messages WHERE uid=%s AND source=%s",
-                    (uid, "official_chat"),
-                )
-                evt_rows, _ = store._execute(
-                    "SELECT COUNT(*) AS total, MAX(end_time) AS latest_end FROM events WHERE uid=%s AND stream=%s",
-                    (uid, stream),
-                )
+                message_count = message_counts.get(uid, 0)
+                versions = event_versions.get(uid, {})
+                current = versions.get(stream, {})
                 profile = profiles_by_uid.get(uid, {})
                 level = profile.get("level")
                 level_state = profile.get("level_state") or "unknown"
                 group_names = list(groups_by_uid.get(uid, []))
-                if not group_names and msg_rows[0]["total"] > 0:
+                if not group_names and message_count > 0:
                     try:
                         conv_rows, _ = store._execute(
                             "SELECT DISTINCT JSON_UNQUOTE(JSON_EXTRACT(payload,'$.conversation_name')) AS name "
@@ -112,7 +120,7 @@ class QueryService:
                         ]
                     except StorageError:
                         group_names = []
-                latest_end = evt_rows[0].get("latest_end") if evt_rows else None
+                latest_end = current.get("latest_end")
                 latest_event_time = (
                     parse_time(latest_end).isoformat() if latest_end is not None else None
                 )
@@ -121,8 +129,9 @@ class QueryService:
                         uid=uid,
                         label=label,
                         stream=stream,
-                        message_count=msg_rows[0]["total"],
-                        event_count=evt_rows[0]["total"],
+                        message_count=message_count,
+                        event_count=current.get("total", 0),
+                        archived_event_counts={key: row["total"] for key, row in versions.items() if key != stream},
                         level=level,
                         level_state=level_state,
                         segment=customer_segment(level, level_state),
@@ -142,24 +151,136 @@ class QueryService:
                     match_window=duration_label(self.settings.match_window),
                     ingest_lookback=duration_label(self.settings.ingest_lookback),
                     closed_grace=duration_label(self.settings.closed_grace),
-                    event_types=list(EVENT_TYPES), provider=self.settings.provider, customers=customers)
+                    event_types=list(EVENT_TYPES),
+                    filter_event_types=[*EVENT_LABELS, PENDING_TYPE],
+                    lifecycle_statuses=list(LIFECYCLE_STATUSES),
+                    waiting_reasons=list(WAITING_REASONS),
+                    resolutions=list(RESOLUTIONS),
+                    priorities=list(PRIORITIES),
+                    provider=self.settings.provider, customers=customers)
 
-    def events(self, uid=None, stream=None, event_type=None):
-        """返回当前事件版本，类型筛选保持官方六类，不改变事件身份。"""
+    def events(self, uid=None, stream=None, event_type=None, status=None, priority=None):
+        """返回当前事件版本，支持多标签、生命周期状态和业务优先级筛选与分层排序。"""
         uid, stream = self.scope(uid, stream)
-        if event_type is not None and event_type not in EVENT_TYPES:
-            raise ValueError("事件类型须为官方六类之一")
+        if event_type is not None and event_type not in (*EVENT_LABELS, PENDING_TYPE):
+            raise ValueError("事件类型须为官方六类、其他或待分类之一")
+        if status is not None and status not in LIFECYCLE_STATUSES:
+            raise ValueError("事件状态不在允许的五类生命周期状态中")
+        if priority is not None and priority not in PRIORITIES:
+            raise ValueError("事件优先级不在允许档位中")
         with self.connection() as store:
             events = store.list_events(uid, stream)
-            items = [event.to_dict() for event in events if event_type is None or event.type == event_type]
+            profile = None
+            reader = getattr(store, "customer_profile", None)
+            if reader is not None:
+                try:
+                    profile = reader(uid)
+                except StorageError:
+                    profile = None
+            items = []
+            for event in events:
+                if profile is not None and event.base_priority != "待评估" and not is_locked(event, "priority"):
+                    tiered = apply_customer_tier(
+                        event.base_priority,
+                        profile.get("level"),
+                        profile.get("level_state"),
+                    )
+                    event.priority = tiered["priority"]
+                    detail = dict(event.priority_detail or {})
+                    detail.update(tiered)
+                    event.priority_detail = detail
+                if event_type is not None and event.type != event_type and event_type not in (event.types or []):
+                    continue
+                if status is not None and event.lifecycle_status != status:
+                    continue
+                if priority is not None and event.priority != priority:
+                    continue
+                items.append(event.to_dict())
             items = enrich_events(store, uid, items, load_sender_roles(self.settings.data_dir),
                                   load_sender_kinds(self.settings.data_dir))
+            items.sort(key=lambda item: event_priority_sort_key(item, profile))
         return {"items": items, "total": len(items)}
 
     def event(self, event_id, uid=None, stream=None):
         """详情也进行客户与流校验，不能仅凭猜测的事件 ID 越过隔离。"""
         items = self.events(uid, stream)["items"]
         return next((event for event in items if event["event_id"] == event_id), None)
+
+    def event_context(self, event_id: str, uid=None, stream=None, padding_minutes: int = 15, limit: int = 80):
+        """只读加载事件所在群聊前后邻近的本地消息上下文，不改写事件证据或水位。"""
+        uid, stream = self.scope(uid, stream)
+        if padding_minutes < 1 or padding_minutes > 120 or limit < 1 or limit > 200:
+            raise ValueError("前后上下文时间窗或条数超出允许范围")
+        roles = load_sender_roles(self.settings.data_dir)
+        kinds = load_sender_kinds(self.settings.data_dir)
+        with self.connection() as store:
+            event = next((e for e in store.list_events(uid, stream) if e.event_id == event_id), None)
+            if event is None:
+                return None
+            ev_dict = event.to_dict()
+            if hasattr(store, "_execute"):
+                enriched_ev = enrich_events(store, uid, [ev_dict], roles, kinds)[0]
+            else:
+                mem_map = {
+                    (m.source, m.message_id): m.to_dict()
+                    for m in getattr(store, "messages", {}).values()
+                    if m.uid == uid
+                }
+                enriched_ev = enrich_event(ev_dict, mem_map, roles, kinds)
+
+            conv_ids = {
+                item["conversation_id"]
+                for item in enriched_ev.get("evidence", [])
+                if item.get("conversation_id")
+            }
+            for raw_item in event.evidence:
+                if raw_item.get("conversation_id"):
+                    conv_ids.add(raw_item["conversation_id"])
+
+            start = event.start_time - timedelta(minutes=padding_minutes)
+            end = event.end_time + timedelta(minutes=padding_minutes) + timedelta(seconds=1)
+            raw_messages = store.context_messages(uid, start, end)
+            matched = [m for m in raw_messages if not conv_ids or m.conversation_id in conv_ids]
+            evidence_pairs = {(e["source"], e["message_id"]) for e in event.evidence}
+
+            truncated = len(matched) > limit
+            if truncated:
+                ev_msgs = [m for m in matched if (m.source, m.message_id) in evidence_pairs]
+                other_msgs = [m for m in matched if (m.source, m.message_id) not in evidence_pairs]
+
+                def distance_seconds(msg):
+                    if msg.sent_at < event.start_time:
+                        return (event.start_time - msg.sent_at).total_seconds()
+                    if msg.sent_at > event.end_time:
+                        return (msg.sent_at - event.end_time).total_seconds()
+                    return 0.0
+
+                other_msgs.sort(key=distance_seconds)
+                budget = max(0, limit - len(ev_msgs))
+                matched = sorted(ev_msgs + other_msgs[:budget], key=message_order)
+
+            msg_payloads = {(m.source, m.message_id): m.to_dict() for m in matched}
+            items = []
+            for m in matched:
+                base = dict(
+                    source=m.source,
+                    message_id=m.message_id,
+                    send_time=m.sent_at.isoformat(),
+                    excerpt=m.content[:160],
+                    digest=m.digest,
+                )
+                enriched_msg = enrich_evidence(base, msg_payloads, roles, kinds)
+                enriched_msg["is_evidence"] = (m.source, m.message_id) in evidence_pairs
+                items.append(enriched_msg)
+
+        return dict(
+            uid=uid,
+            stream=stream,
+            event_id=event_id,
+            window=dict(start=start.isoformat(), end=end.isoformat()),
+            items=items,
+            truncated=truncated,
+        )
 
     def event_changes(self, event_id, uid, stream, runs, offset=0, execution_offset=0, *, include_details=True):
         """变化面板只读已保存事件与批次，不补查当前消息或私有模型日志。"""

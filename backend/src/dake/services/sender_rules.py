@@ -1,7 +1,7 @@
 """配置化账号身份管理，读写与增量处理共用同一份私有规则。"""
 
 from datetime import datetime
-import fcntl
+import portalocker
 import hashlib
 import json
 import os
@@ -66,7 +66,7 @@ class SenderRuleService:
         folder.mkdir(parents=True, exist_ok=True, mode=0o700)
         descriptor = os.open(folder / "sender_kinds.lock", os.O_WRONLY | os.O_CREAT, 0o600)
         with os.fdopen(descriptor, "w") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+            portalocker.lock(lock, portalocker.LOCK_EX)
             document = read_sender_kind_document(self.settings.data_dir)
             if version(document) != expected_version:
                 raise RuleConflict("配置已被更新，请刷新后再保存")

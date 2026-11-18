@@ -6,7 +6,13 @@ import {
   listCustomerProfiles,
   listCustomerSyncs,
 } from './generated/customers';
-import { getEventChanges, listEvents } from './generated/events';
+import {
+  getEventChanges,
+  getEventContext,
+  getManualDecision,
+  listEvents,
+  submitManualDecision,
+} from './generated/events';
 import { getRun, listRuns } from './generated/runs';
 import {
   listSenderRules,
@@ -61,9 +67,51 @@ export const api = {
     body: API.CustomerSyncRequest,
   ): Promise<API.CustomerSyncResponse> => createCustomerSync(body),
   config: (signal?: AbortSignal) => getConfig({ signal }),
-  events: (uid: string, stream: string, type: string, signal?: AbortSignal) =>
+  events: (
+    uid: string,
+    stream: string,
+    type: string,
+    signal?: AbortSignal,
+    status = '',
+    priority = '',
+  ) =>
     listEvents(
-      { uid, stream: stream || undefined, type: type || undefined },
+      {
+        uid,
+        stream: stream || undefined,
+        type: type || undefined,
+        status: status || undefined,
+        priority: priority || undefined,
+      },
+      { signal },
+    ),
+  eventContext: (
+    eventId: string,
+    uid: string,
+    stream: string,
+    signal?: AbortSignal,
+    paddingMinutes = 15,
+  ) =>
+    getEventContext(
+      {
+        event_id: eventId,
+        uid,
+        stream: stream || undefined,
+        padding_minutes: paddingMinutes,
+      },
+      { signal },
+    ),
+  submitManualDecision: (eventId: string, body: API.ManualDecisionRequest) =>
+    submitManualDecision({ event_id: eventId }, body),
+  getManualDecision: (
+    eventId: string,
+    operationId: string,
+    uid: string,
+    stream: string,
+    signal?: AbortSignal,
+  ) =>
+    getManualDecision(
+      { event_id: eventId, operation_id: operationId, uid, stream },
       { signal },
     ),
   eventChanges: (

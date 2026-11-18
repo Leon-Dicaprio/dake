@@ -2,10 +2,13 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
-from ..domain.models import SenderKind, SenderRole
 from ..domain.customer_policy import CustomerSegment
+from ..domain.manual_controls import ControlledField, ManualDecisionRequest, ManualFieldAction
+from ..domain.models import EVENT_LABELS, PENDING_TYPE, SenderKind, SenderRole, normalize_event_payload
+from ..domain.priority_policy import PRIORITIES, PriorityLevel
+from ..domain.status_policy import LIFECYCLE_STATUSES, RESOLUTIONS, WAITING_REASONS, LifecycleStatus, Resolution, WaitingReason
 
 
 class APIModel(BaseModel):
@@ -40,6 +43,23 @@ class EvidenceResponse(APIModel):
     sender_kind: SenderKind = "unknown"
 
 
+class ContextMessageResponse(EvidenceResponse):
+    """事件所在群聊前后邻近的原始消息视图，标明是否属于该事件已采纳证据。"""
+
+    is_evidence: bool = False
+
+
+class EventContextResponse(APIModel):
+    """事件前后群聊上下文只读响应，严格限定在同客户及同群范围内。"""
+
+    uid: str
+    stream: str
+    event_id: str
+    window: TimeWindow
+    items: list[ContextMessageResponse] = Field(default_factory=list)
+    truncated: bool = False
+
+
 class ConversationRef(APIModel):
     """事件覆盖到的群聊，供列表和筛选展示，不改变事件身份。"""
 
@@ -49,18 +69,63 @@ class ConversationRef(APIModel):
     platform_label: str
 
 
+class ManualControlResponse(APIModel):
+    """单个受控核心字段的人工锁定与待核对冲突视图。"""
+
+    field: ControlledField
+    locked: bool = False
+    operator: str | None = None
+    reason: str | None = None
+    decided_at: str | None = None
+    adopted_value: JsonValue | None = None
+    pending_conflict: dict[str, JsonValue] | None = None
+
+
+class ManualOperationResponse(APIModel):
+    """已提交的人工裁定操作收据。"""
+
+    operation_id: str
+    request_digest: str
+    operator: str
+    reason: str
+    decided_at: str
+    version: int
+    actions: list[dict[str, JsonValue]] = Field(default_factory=list)
+
+
 class EventSnapshot(APIModel):
     """一个事件版本的完整业务字段，不递归嵌入所有修订历史。"""
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_snapshot(cls, value):
+        if isinstance(value, dict):
+            return normalize_event_payload(value)
+        return value
 
     event_id: str
     uid: str
     stream: str
     type: str
+    types: list[str] = Field(default_factory=list)
+    type_evidence: dict[str, list[dict[str, JsonValue]]] = Field(default_factory=dict)
+    removed_types: dict[str, list[dict[str, JsonValue]]] = Field(default_factory=dict)
+    classification_evidence_status: Literal["已记录", "未记录"] = "未记录"
+    classification_status: Literal["已分类", "待分类"] = "已分类"
+    other_reason: dict[str, JsonValue] | None = None
+    typed_attributes: dict[str, dict[str, dict[str, JsonValue]]] = Field(default_factory=dict)
     topic_key: str | None
     start_time: str
     end_time: str
     status: str
+    lifecycle_status: LifecycleStatus = "状态未明"
+    waiting_reason: WaitingReason | None = None
+    resolution: Resolution | None = None
+    status_detail: dict[str, JsonValue] | None = None
     severity: str
+    priority: PriorityLevel = "待评估"
+    base_priority: PriorityLevel = "待评估"
+    priority_detail: dict[str, JsonValue] | None = None
     summary: str
     created_on: str
     assignees: list[str] = Field(default_factory=list)
@@ -68,6 +133,10 @@ class EventSnapshot(APIModel):
     attributes: dict[str, JsonValue] = Field(default_factory=dict)
     extensions: dict[str, JsonValue] = Field(default_factory=dict)
     review_flag: str | None = None
+    review_items: list[dict[str, JsonValue]] = Field(default_factory=list)
+    version: int = 0
+    manual_controls: dict[str, ManualControlResponse] = Field(default_factory=dict)
+    manual_operations: list[ManualOperationResponse] = Field(default_factory=list)
     closed_at: str | None = None
     recovery: "RecoveryConfirmation | None" = None
     recurrence_of: "RecurrenceLink | None" = None
@@ -127,20 +196,22 @@ class EventChange(APIModel):
 
 
 class EventRevision(APIModel):
-    """记录哪一次处理、哪些消息创建或更新了事件。"""
+    """记录哪一次处理、哪些消息或人工裁定创建或更新了事件。"""
 
     action: Literal["created", "updated"]
+    source: Literal["automatic", "manual"] = "automatic"
     window_start: str
     window_end: str
     message_ids: list[str]
     snapshot: EventSnapshot | None = None
     revision_no: int | None = Field(default=None, ge=1)
     recorded_at: str | None = None
-    change_kind: Literal["created", "progress", "confirmation", "correction", "evidence_only"] | None = None
+    change_kind: Literal["created", "progress", "confirmation", "correction", "evidence_only", "classification", "manual"] | None = None
     change_summary: str | None = None
     summary_changed: bool | None = None
     changed_fields: list[str] = Field(default_factory=list)
     changes: list[EventChange] = Field(default_factory=list)
+    manual_operation: ManualOperationResponse | None = None
     policy_version: str | None = None
 
 
@@ -157,6 +228,14 @@ class EventListResponse(APIModel):
 
     items: list[EventResponse]
     total: int
+
+
+class ManualDecisionResponse(APIModel):
+    """人工裁定提交或查询结果，包含更新后的事件与对应收据。"""
+
+    event: EventResponse
+    operation: ManualOperationResponse
+    idempotent_replay: bool = False
 
 
 class ReviewResponse(APIModel):
@@ -409,6 +488,7 @@ class CustomerResponse(APIModel):
     label: str
     message_count: int
     event_count: int
+    archived_event_counts: dict[str, int] = Field(default_factory=dict, description="本客户历史分析版本的已保存事件数")
     stream: str
     level: str | None = None
     level_state: str = "unknown"
@@ -433,6 +513,11 @@ class ConfigResponse(APIModel):
     ingest_lookback: str
     closed_grace: str
     event_types: list[str]
+    filter_event_types: list[str] = Field(default_factory=lambda: [*EVENT_LABELS, PENDING_TYPE])
+    lifecycle_statuses: list[str] = Field(default_factory=lambda: list(LIFECYCLE_STATUSES))
+    waiting_reasons: list[str] = Field(default_factory=lambda: list(WAITING_REASONS))
+    resolutions: list[str] = Field(default_factory=lambda: list(RESOLUTIONS))
+    priorities: list[str] = Field(default_factory=lambda: list(PRIORITIES))
     provider: Literal["stub", "xhub"] = "stub"
     customers: list[CustomerResponse]
 

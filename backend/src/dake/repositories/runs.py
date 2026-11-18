@@ -160,6 +160,34 @@ class RunRepository:
             rows, _ = store._execute("SELECT * FROM processing_runs WHERE " + where, args)
         return self._record(rows[0], internal=internal) if rows else None
 
+    def progress_rows(self, run_ids, *, include_cycles=False):
+        """分批读取同一执行引用的进度，省去逐窗口连接及请求、快照等正文。"""
+        ids = list(dict.fromkeys(run_ids))
+        result = {}
+        if not ids:
+            return result
+        columns = "run_id,status,created_at,completed_windows,total_windows"
+        if include_cycles:
+            # 只传回统计所需的字段，保留旧周期中缺失字段及空数组的语义。
+            columns += """, (SELECT JSON_ARRAYAGG(JSON_OBJECT(
+                'processed', c.processed, 'created', COALESCE(c.created, JSON_ARRAY()),
+                'updated', COALESCE(c.updated, JSON_ARRAY()), 'filter_audit', COALESCE(c.audit, JSON_ARRAY())))
+                FROM JSON_TABLE(cycles, '$[*]' COLUMNS(
+                    processed INT PATH '$.processed' DEFAULT '0' ON EMPTY,
+                    created JSON PATH '$.created', updated JSON PATH '$.updated',
+                    audit JSON PATH '$.filter_audit')) AS c) AS cycles"""
+        with self.connection() as store:
+            for start in range(0, len(ids), 400):
+                batch = ids[start:start + 400]
+                placeholders = ",".join(["%s"] * len(batch))
+                rows, _ = store._execute(
+                    f"SELECT {columns} FROM processing_runs WHERE run_id IN ({placeholders})", tuple(batch))
+                for row in rows:
+                    if include_cycles:
+                        row["cycles"] = _decode(row["cycles"], [])
+                    result[row["run_id"]] = row
+        return result
+
     def list(self, uid=None, mode=None, stream=None) -> dict:
         """列表省略周期正文，只显示任务摘要和进度。"""
         conditions, args = [], []

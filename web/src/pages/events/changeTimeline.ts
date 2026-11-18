@@ -4,14 +4,23 @@ import { evidenceKey, revisionEvidence } from './revisionEvidence';
 const fields = {
   summary: '摘要',
   status: '状态',
+  lifecycle_status: '生命周期状态',
+  waiting_reason: '等待方',
+  resolution: '结束原因',
   severity: '等级',
+  priority: '优先级',
+  base_priority: '基础优先级',
   assignees: '跟进人',
   attributes: '事件属性',
+  types: '分类标签',
+  typed_attributes: '类型专属属性',
+  classification_status: '分类状态',
+  manual_controls: '人工锁定',
   recovery: '恢复确认',
   recurrence_of: '复发关联',
-  review_flag: '待确认标记',
+  review_flag: '待核对标记',
   closed_at: '关闭状态',
-  type: '事件类型',
+  type: '主类型',
   topic_key: '事件主题',
 } as const;
 
@@ -122,7 +131,11 @@ export function savedChanges(data: API.EventChangesResponse) {
             Boolean(time) && Number.isFinite(Date.parse(time || '')),
         )
         .sort((left, right) => Date.parse(left) - Date.parse(right));
-      const time = times.at(-1) ?? null;
+      const isManual =
+        revision.source === 'manual' || revision.change_kind === 'manual';
+      const time =
+        times.at(-1) ??
+        (isManual && revision.recorded_at ? revision.recorded_at : null);
       const evidenceOnly =
         revision.action !== 'created' &&
         !changed.length &&
@@ -161,15 +174,19 @@ export function savedChanges(data: API.EventChangesResponse) {
           title:
             revision.action === 'created'
               ? '新建事件'
-              : evidenceOnly
-                ? '仅补证据'
-                : revision.change_kind === 'confirmation'
-                  ? '进展确认'
-                  : revision.change_kind === 'correction'
-                    ? '结论更正'
-                    : revision.change_kind === 'progress'
-                      ? '事件进展'
-                      : '已保存修订',
+              : isManual
+                ? '人工裁定'
+                : evidenceOnly
+                  ? '仅补证据'
+                  : revision.change_kind === 'classification'
+                    ? '分类与状态更新'
+                    : revision.change_kind === 'confirmation'
+                      ? '进展确认'
+                      : revision.change_kind === 'correction'
+                        ? '结论更正'
+                        : revision.change_kind === 'progress'
+                          ? '事件进展'
+                          : '已保存修订',
         },
       ];
     })

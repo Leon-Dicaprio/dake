@@ -51,18 +51,36 @@ function savedEvent(id: string): API.EventResponse {
     uid,
     stream,
     type: '排障',
+    types: ['排障'],
+    type_evidence: {},
+    removed_types: {},
+    classification_evidence_status: '未记录',
+    classification_status: '已分类',
+    other_reason: null,
+    typed_attributes: {},
     topic_key: '虚构报告',
     start_time: moment,
     end_time: moment,
     created_on: moment,
     summary: `虚构报告 ${id} 的当前情况`,
     status: '未知',
+    lifecycle_status: '状态未明',
+    waiting_reason: null,
+    resolution: null,
+    status_detail: null,
     severity: '未知',
+    priority: '待评估',
+    base_priority: '待评估',
+    priority_detail: null,
     evidence: [],
     assignees: [],
     attributes: {},
     extensions: {},
     review_flag: null,
+    review_items: [],
+    version: 1,
+    manual_controls: {},
+    manual_operations: [],
     closed_at: null,
     recovery: null,
     recurrence_of: null,
@@ -108,6 +126,17 @@ async function mockProgress(page: Page) {
         ingest_lookback: '2d',
         closed_grace: '7d',
         event_types: ['排障'],
+        filter_event_types: ['排障', '其他', '待分类'],
+        lifecycle_statuses: [
+          '跟进中',
+          '等待中',
+          '已解决',
+          '已取消',
+          '状态未明',
+        ],
+        waiting_reasons: ['等待客户', '等待内部支撑', '等待其他方'],
+        resolutions: ['客户确认恢复', '支撑声明已修复', '已答复或已交付'],
+        priorities: ['P0', 'P1', 'P2', 'P3', '待评估'],
         provider: 'xhub',
         customers: [
           {
@@ -276,21 +305,24 @@ test('事件页统一任务入口、自动更新事件数，并保留当前选�
   await page.goto('/events');
   const link = page.locator('.inbox-toolbar-actions a[href="/tasks"]');
   await expect(link).toContainText('任务中心');
-  await expect(page.locator('.heading-count')).toHaveText('1');
+  const listHeading = page.getByRole('heading', { name: /^事件列表/ });
+  await expect(listHeading).toHaveText(/事件列表\s*1$/);
   const selected = page.locator('.event-rows [aria-current=true]');
   await expect(selected).toContainText('synthetic-first');
   state.events.push(savedEvent('synthetic-second'));
-  await expect(page.locator('.heading-count')).toHaveText('2');
+  await expect(listHeading).toHaveText(/事件列表\s*2$/);
   await expect(selected).toContainText('synthetic-first');
   await expect(page.locator('.inbox-split')).toHaveCSS('display', 'grid');
   await page.setViewportSize({ width: 1024, height: 800 });
   await expect(link).toBeVisible();
-  const tops = await page
-    .locator('.inbox-filters select')
-    .evaluateAll((nodes) =>
-      nodes.map((node) => node.getBoundingClientRect().top),
-    );
-  expect(Math.max(...tops) - Math.min(...tops)).toBeLessThan(2);
+  await page.getByRole('button', { name: '筛选', exact: true }).click();
+  const filters = page.getByRole('dialog', { name: '筛选事件' });
+  await expect(filters).toBeInViewport({ ratio: 1 });
+  const fields = filters.getByRole('combobox');
+  await expect(fields).toHaveCount(4);
+  for (const field of await fields.all())
+    await expect(field).toBeInViewport({ ratio: 1 });
+  await page.keyboard.press('Escape');
   await link.click();
   await expect(page).toHaveURL(/\/tasks$/);
   expect(state.writes).toEqual([]);

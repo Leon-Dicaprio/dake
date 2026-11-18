@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { EventDetail } from '@/components/EventDetail';
-import { EventType } from '@/components/EventType';
+import { EventType, eventDisplayLabels } from '@/components/EventType';
 import { formatTime } from '@/lib/utils';
 
 /** 从本轮保存的事件快照展示变化，不用当前最终事件覆盖历史证据。 */
@@ -140,7 +140,11 @@ export function CyclePanel({
                       <span>
                         <strong>{item.summary}</strong>
                         <small>
-                          {item.type}
+                          {eventDisplayLabels(item).join(' / ')}
+                          <span>·</span>
+                          {item.priority || '待评估'}
+                          <span>·</span>
+                          {item.lifecycle_status || item.status}
                           <span>·</span>
                           {item.evidence.length} 条证据
                         </small>

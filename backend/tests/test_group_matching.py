@@ -75,6 +75,15 @@ def test_new_with_text_reference_is_review_even_with_old_proof(tmp_path):
     assert record["program_matching"]["matched_by"] == "explicit_reference"
 
 
+def test_explicit_reference_allows_label_change_without_changing_event_identity(tmp_path):
+    case = setup(tmp_path)
+    msg = message("label-follow", 2, f"event_id={case[-1]} 虚构上传故障需申请额外带宽")
+    result = follow(case, msg, type="资源需求", types=["排障", "资源需求"],
+        type_evidence={"资源需求": [dict(evidence_ids=[msg.key], quote="申请额外带宽")]})
+    assert result.updated == [case[-1]] and not result.created and not result.review
+    assert case[1].events[case[-1]].types == ["排障", "资源需求"]
+
+
 def test_exact_reference_without_old_evidence_is_review_not_unchecked_update(tmp_path):
     case = setup(tmp_path)
     msg = message("follow", 2, f"event_id={case[-1]} 虚构报告上传故障排查中")
