@@ -52,7 +52,7 @@ def complete_field_changes(candidate, available, eligible_keys):
     if candidate.decision not in {"new", "update"} or not candidate.changes:
         return []
     extracted = candidate.extensions.get("extraction_v1", {})
-    facts = [(name, extracted.get(name)) for name in ("status", "severity", "other_reason")]
+    facts = [(name, extracted.get(name)) for name in ("status", "severity")]
     facts += [
         (f"{name}[{index}]", fact)
         for name in ("assignees", "attributes", "extensions")
@@ -131,7 +131,7 @@ def validate_changes(candidate, available, eligible_keys):
 
     refs = allowed & eligible_keys
     extracted = candidate.extensions.get("extraction_v1", {})
-    verbatim_facts = [(name, extracted.get(name)) for name in ("status", "severity", "other_reason")]
+    verbatim_facts = [(name, extracted.get(name)) for name in ("status", "severity")]
     verbatim_facts += [
         (f"{name}[{index}]", fact)
         for name in ("assignees", "attributes", "extensions")

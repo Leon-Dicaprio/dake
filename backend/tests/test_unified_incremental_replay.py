@@ -622,3 +622,97 @@ def test_unified_contract_schema_and_json_parsing():
         "evidence_ids": [m1.key],
         "quote": "要求明早交付",
     }
+
+
+def test_other_category_cross_window_update_and_basis_completion():
+    """验证『其他』类别分析性排除理由、跨窗口上下文标签依据及漏填新消息 basis 时的自动补足。"""
+    from dake.domain.models import Event
+
+    m_ctx = msg("o1", "2026-11-10 10:20:00", "合成消息：请为新入职运维团队安排一场存储控制台操作培训。")
+    m_new = msg("o2", "2026-11-10 10:35:00", "合成消息：就是上面那场培训，讲师正在排周四下午的时间。")
+    old_event = Event(
+        event_id="evt-other-1",
+        uid=UID,
+        stream="syn-stream",
+        type="其他",
+        types=["其他"],
+        classification_status="已分类",
+        other_reason={
+            "value": "专项操作培训服务责任，不涉及采购、流失、故障、资源、新功能或商务办理",
+            "evidence_ids": [m_ctx.key],
+            "quote": "安排一场存储控制台操作培训",
+        },
+        topic_key="training:storage-console",
+        start_time=m_ctx.sent_at,
+        end_time=m_ctx.sent_at,
+        status="等待中",
+        severity="P3",
+        summary="客户申请存储控制台操作培训",
+        created_on=m_ctx.sent_at,
+        evidence=[{"source": m_ctx.source, "message_id": m_ctx.message_id, "digest": m_ctx.digest}],
+    )
+    raw_update = json.dumps(
+        {
+            "schema_version": "4.0",
+            "candidates": [
+                {
+                    "type": "其他",
+                    "classification_status": "已分类",
+                    "type_labels": [
+                        {
+                            "type": "其他",
+                            "evidence_ids": [m_ctx.key, m_ctx.key],
+                            "quote": "安排一场存储控制台操作培训",
+                        }
+                    ],
+                    "removed_types": [],
+                    "typed_attributes": [],
+                    "other_reason": {
+                        "value": "属于专项使用培训服务责任，排除商机、流失、排障、资源、功能及商务六类",
+                        "evidence_ids": [m_ctx.key, m_ctx.key],
+                        "quote": "安排一场存储控制台操作培训",
+                    },
+                    "topic_key": "training:storage-console",
+                    "summary": "存储控制台培训讲师正在协调周四下午时间",
+                    "evidence_ids": [m_new.key],
+                    "status": None,
+                    "severity": None,
+                    "status_proposal": None,
+                    "priority_proposal": None,
+                    "assignees": [],
+                    "attributes": [],
+                    "extensions": [],
+                    "decision": "update",
+                    "referenced_event_id": "evt-other-1",
+                    "possible_event_ids": [],
+                    "decision_reason": "口语指代延续同一培训安排事项",
+                    "basis": [{"message_id": m_ctx.key, "quote": "安排一场存储控制台操作培训"}],
+                    "continuity": None,
+                    "changes": [
+                        {
+                            "kind": "progress",
+                            "text": "讲师正在排周四下午的培训时间",
+                            "replaces": None,
+                            "evidence": [{"message_id": m_new.key, "quote": "讲师正在排周四下午的时间"}],
+                        }
+                    ],
+                }
+            ],
+        },
+        ensure_ascii=False,
+    )
+    normalizations = []
+    parsed = parse_attribution_output(
+        raw_update,
+        [m_new],
+        [m_ctx],
+        [old_event],
+        normalizations=normalizations,
+        require_type_labels=True,
+    )
+    assert len(parsed) == 1
+    cand = parsed[0]
+    assert cand.decision == "update"
+    assert cand.other_reason["evidence_ids"] == [m_ctx.key]
+    assert any(ref["message_id"] == m_new.key for ref in cand.basis)
+    assert any(item["reason"] == "verified_change_quote_completed_basis" for item in normalizations)

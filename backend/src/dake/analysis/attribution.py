@@ -112,7 +112,8 @@ def parse_attribution_output(
                     errors.append(f"candidates[{ci}].basis[{bi}]：归属引文不是该消息的连续原文")
         raise ContractError("；".join(errors)) from None
     for candidate_index, candidate in enumerate(candidates):
-        completed = complete_field_changes(candidate, available, {m.key for m in new_messages})
+        new_keys = {m.key for m in new_messages}
+        completed = complete_field_changes(candidate, available, new_keys)
         if candidate.decision in {"duplicate", "review"} and candidate.changes:
             completed.append(dict(
                 field="changes",
@@ -123,8 +124,9 @@ def parse_attribution_output(
         completed += normalize_uncertain_reference(candidate, existing_events)
         completed += normalize_review_candidates(candidate, existing_events)
         completed += normalize_review_basis(candidate, available, history_items)
+        completed += complete_basis_from_changes(candidate, available, new_keys)
         completed += normalize_redundant_basis(
-            candidate, available, history_items, existing_events, {m.key for m in new_messages}
+            candidate, available, history_items, existing_events, new_keys
         )
         if normalizations is not None:
             normalizations.extend(dict(candidate_index=candidate_index, **item) for item in completed)
@@ -143,6 +145,47 @@ def parse_attribution_output(
                     "不能借用其他消息的正文。"
                 ) from None
     return candidates
+
+
+def complete_basis_from_changes(candidate, available, new_keys):
+    """当模型已在 changes 中给出经逐字核验的本轮新消息引文、仅漏抄入 basis 时，补足本轮依据避免误降级为 review。"""
+    if candidate.decision not in {"new", "update"} or candidate.continuity is not None or candidate.ambiguous:
+        return []
+    allowed_ids = set(candidate.evidence_ids)
+    has_current = any(
+        ref.get("message_id") in new_keys
+        and ref.get("message_id") in allowed_ids
+        and ref.get("message_id") in available
+        and isinstance(ref.get("quote"), str)
+        and ref["quote"].strip()
+        and ref["quote"] in available[ref["message_id"]].content
+        for ref in candidate.basis
+    )
+    if has_current:
+        return []
+    if candidate.decision == "update" and not any(ref.get("message_id") not in new_keys for ref in candidate.basis):
+        return []
+
+    added = []
+    seen = {(ref.get("message_id"), ref.get("quote")) for ref in candidate.basis}
+    for change in candidate.changes or []:
+        for ref in change.get("evidence", []):
+            key, quote = ref.get("message_id"), ref.get("quote")
+            if (
+                key in new_keys
+                and key in allowed_ids
+                and key in available
+                and isinstance(quote, str)
+                and quote.strip()
+                and quote in available[key].content
+                and (key, quote) not in seen
+            ):
+                added.append(dict(message_id=key, quote=quote))
+                seen.add((key, quote))
+    if not added:
+        return []
+    candidate.basis = [*candidate.basis, *added]
+    return [dict(field="basis", reason="verified_change_quote_completed_basis", count=len(added))]
 
 
 def normalize_review_basis(candidate, available, history_items):

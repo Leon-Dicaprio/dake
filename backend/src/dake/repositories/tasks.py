@@ -90,8 +90,21 @@ class TaskRepository(RunRepository):
         if active:
             where += (" AND " if where else " WHERE ") + "status IN ('queued','running')"
         with self.connection() as store:
-            rows, _ = store._execute("SELECT * FROM task_executions " + where + " ORDER BY created_at DESC LIMIT 100", args)
-        return [record(row) for row in rows]
+            # 先排主键避免大体积 state JSON 进入 MySQL 排序缓冲区触发 1038 错误。
+            heads, _ = store._execute(
+                "SELECT execution_id FROM task_executions " + where + " ORDER BY created_at DESC LIMIT 100",
+                args,
+            )
+            ids = [row["execution_id"] for row in heads]
+            if not ids:
+                return []
+            placeholders = ",".join(["%s"] * len(ids))
+            rows, _ = store._execute(
+                f"SELECT * FROM task_executions WHERE execution_id IN ({placeholders})",
+                tuple(ids),
+            )
+        by_id = {row["execution_id"]: record(row) for row in rows}
+        return [by_id[eid] for eid in ids if eid in by_id]
 
     def execution(self, execution_id):
         with self.connection() as store:

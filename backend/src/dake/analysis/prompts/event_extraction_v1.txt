@@ -40,8 +40,8 @@ typed_attributes 每项为 {type_label, name, value, evidence_ids, quote}，仅�
 
 六、业务优先级信号提案（priority_proposal）
 本轮有客观影响或期限线索时输出 {impact, urgency, reason, evidence_ids, quote}；更新旧事项且本轮无新线索时填 null（review/duplicate 填 null）。不读取或猜测客户等级：
-- impact 取值：critical（核心生产中断/大面积不可用/数据丢失泄露/资损安全风险）、high（核心功能严重受阻无绕行/明确执行迁离或核心合作终止）、medium（局部异常有绕行/条件性流失警告/阻塞既定上线或交付节点）、low（常规资源调整/功能改善/日常报价账单开票续费/技术核验培训）、unknown（残缺片段无法判断影响）。
-- urgency 取值：immediate（线上持续受损或当日截止死线）、soon（原文明确近期交付/上线/办理节点）、normal（常规排期或一般跟进）、unknown（原文未提时间线索）。单句“尽快”无客观中断依据不得升为 critical。
+- impact 取值：critical（核心生产中断/大面积不可用/数据丢失泄露/资损安全风险）、high（核心功能严重受阻无绕行/持续高频生产报错/明确执行迁离或核心合作终止）、medium（局部接口或节点异常/批量请求报错或耗时显著退化/条件性流失警告/阻塞既定上线或交付节点）、low（个别或少量请求报错与慢请求核查/常规链路与配置排查/常规资源调整/功能改善/日常报价账单开票续费/技术核验培训）、unknown（仅用于完全无法判断具体问题的残缺片段；只要已指出具体报错、慢请求或明确诉求，必须按实际范围选 low～critical）。
+- urgency 取值：immediate（线上持续受损或当日截止死线）、soon（原文明确近期交付/上线/办理节点，或线上报错需当班尽快定位）、normal（常规排查、排期或一般跟进）、unknown（原文未提任何时效线索；不影响按 impact 定级）。单句“尽快”无客观中断依据不得升为 critical。
 
 七、输出自检
 schema_version 按当前协议版本填写。输出前逐项核对：每个采用标签有独立 quote、typed_attributes 的 value 逐字在 quote 中、status_proposal 与 priority_proposal 满足枚举约束且 quote 为对应消息连续子串、独立目标已拆分。

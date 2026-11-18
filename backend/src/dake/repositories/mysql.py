@@ -414,13 +414,28 @@ class MySQLStore:
             if count != 1:
                 raise StorageError("归属收据的消息版本已变化或不存在，当前周期须重新处理")
 
+    def customer_profile(self, uid: str) -> dict | None:
+        """读取客户目录等级快照供优先级加权使用；未迁移客户目录表时安全降级为空。"""
+        if not uid:
+            return None
+        try:
+            rows, _ = self._execute(
+                "SELECT uid, level, level_state, tam, tam_b FROM customer_profiles WHERE uid=%s LIMIT 1",
+                (uid,),
+            )
+        except StorageError:
+            return None
+        return dict(rows[0]) if rows else None
+
     def list_events(self, uid: str, stream: str) -> list[Event]:
-        """读取一个客户、一个分析版本的事件；观察窗口与关闭宽限由业务层判断。"""
+        """读取一个客户、一个分析版本的事件；在内存侧排序，避免大体积 JSON 占满 MySQL 排序缓冲区。"""
         rows, _ = self._execute(
-            "SELECT payload FROM events WHERE uid=%s AND stream=%s ORDER BY start_time,event_id",
+            "SELECT payload FROM events WHERE uid=%s AND stream=%s",
             (uid, stream),
         )
-        return [Event.from_dict(_decoded(row["payload"])) for row in rows]
+        items = [Event.from_dict(_decoded(row["payload"])) for row in rows]
+        items.sort(key=lambda event: (event.start_time, event.event_id))
+        return items
 
     def history_event_heads(self, uid, stream, before, *, limit, since=None, cursor=None, event_ids=None):
         """先按客户和流限定，按索引顺序有界读取元数据，不查询正文或摘要。"""

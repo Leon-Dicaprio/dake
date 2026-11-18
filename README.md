@@ -45,6 +45,12 @@ docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" exec mysql --use
 docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" exec mysql --user="$MYSQL_USER" "$MYSQL_DATABASE"' < backend/migrations/003_customer_directory.sql
 ```
 
+新环境也可直接使用汇总表结构 `backend/schema.sql` 一步初始化全部 15 张表（或导入团队私下共享的 `data/exports/*.sql[.gz]` 本地快照，真实数据快照仅保存在本地 `data/`，禁止提交入库）：
+
+```bash
+.venv/bin/python scripts/db_snapshot.py import backend/schema.sql
+```
+
 MySQL 8.4 仅监听 `127.0.0.1:3307`，数据库默认 `dake_aftersales`，应用用户默认 `dake`。数据保存在 `data/mysql/`。健康检查使用应用账号执行查询，启动完成后应显示 `healthy`。
 
 业务存储使用 `messages` 和 `events`，网页任务存于 `processing_runs`（API 启动时幂等创建），逐窗口执行与重试存于 `processing_attempts`。执行记录表由 `backend/migrations/001_processing_attempts.sql` 显式迁移；当前本地库已有此表，新环境需先迁移。消息的处理标记与事件更新在同一事务提交；`data/state/` 的水位仅帮助选择下一次窗口，丢失后可依据数据库记录去重。

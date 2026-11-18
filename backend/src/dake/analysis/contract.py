@@ -12,6 +12,48 @@ from .validation import validate_candidates
 
 LabelLiteral = Literal["商机", "流失", "排障", "资源需求", "功能需求", "商务需求", "其他"]
 EventTypeLiteral = Literal["商机", "流失", "排障", "资源需求", "功能需求", "商务需求", "其他", "待分类"]
+TypedAttributeNameLiteral = Literal[
+    "交易对象与采购范围",
+    "采购意向与评估事实",
+    "计划规模",
+    "预算或交易金额",
+    "采购/上线计划时间",
+    "成交事实及范围",
+    "流失对象与范围",
+    "风险、计划与实际变化",
+    "原因与触发条件",
+    "减少或转移规模",
+    "去向与执行时间",
+    "挽留或退出办理结果",
+    "异常对象与环境",
+    "症状与对照表现",
+    "客户影响",
+    "发生及影响范围",
+    "排查发现与根因",
+    "处置与验证结果",
+    "恢复事实",
+    "资源对象与交付范围",
+    "请求动作与用途",
+    "现有可用量",
+    "目标总量与增减量",
+    "资源缺口",
+    "期望交付与承诺",
+    "审批、交付与可用验证",
+    "能力对象与使用场景",
+    "当前行为及限制",
+    "期望行为与改善目标",
+    "验收条件",
+    "期望可用时间",
+    "评估与承诺范围",
+    "上线与需求验证结果",
+    "办理对象与事项范围",
+    "价格与金额口径",
+    "合同与商务条件",
+    "续费或终止安排",
+    "账单与发票要求",
+    "办理期限与约定",
+    "办理事实与结果",
+]
 
 
 class ContractError(ValueError):
@@ -53,6 +95,7 @@ class RemovedTypeLabel(TypeLabel):
 class TypedAttribute(Attribute):
     """明确隶属某一已采用类型标签的专属属性值。"""
 
+    name: TypedAttributeNameLiteral
     type_label: LabelLiteral
 
 
@@ -167,7 +210,8 @@ def parse_output(
         elif item.type not in adopted_labels:
             raise ContractError("主类型必须包含在类型标签中")
         if item.type == "其他" or "其他" in adopted_labels:
-            if item.other_reason is None:
+            old_event_for_other = old.get(item.referenced_event_id) if item.decision in {"update", "duplicate"} else None
+            if item.other_reason is None and not (old_event_for_other and old_event_for_other.other_reason):
                 raise ContractError("其他事项必须说明排除六类的直接理由")
 
         explicit = output_model is not ExtractionOutput
@@ -191,8 +235,8 @@ def parse_output(
             if len({fact.name for fact in facts}) != len(facts):
                 raise ContractError("属性名称不得重复")
 
-        # 逐字事实与枚举提案统一核对消息范围和连续原文；枚举提案不要求字面枚举词出现在原话中。
-        verbatim_facts = [(name, getattr(item, name)) for name in ("status", "severity", "other_reason")]
+        # 逐字事实与枚举提案统一核对消息范围和连续原文；排除理由与枚举提案不要求分析结论字面出现在原话中。
+        verbatim_facts = [(name, getattr(item, name)) for name in ("status", "severity")]
         verbatim_facts += [
             (f"{name}[{index}]", fact)
             for name in ("attributes", "extensions", "assignees")
@@ -202,17 +246,23 @@ def parse_output(
 
         quote_only_items = [(f"type_labels[{index}]", label) for index, label in enumerate(item.type_labels)]
         quote_only_items += [(f"removed_types[{index}]", label) for index, label in enumerate(item.removed_types)]
+        if item.other_reason is not None:
+            quote_only_items.append(("other_reason", item.other_reason))
         if item.status_proposal is not None:
             quote_only_items.append(("status_proposal", item.status_proposal))
         if item.priority_proposal is not None:
             quote_only_items.append(("priority_proposal", item.priority_proposal))
 
         errors = []
+        if item.other_reason is not None and not item.other_reason.value.strip():
+            errors.append(f"candidates[{candidate_index}].other_reason：排除六类理由不能为空白")
         for path, fact in verbatim_facts:
             if fact is None:
                 continue
-            refs = set(fact.evidence_ids)
-            if not refs.issubset(ids) or len(refs) != len(fact.evidence_ids):
+            dedup_refs = list(dict.fromkeys(fact.evidence_ids))
+            fact.evidence_ids = dedup_refs
+            refs = set(dedup_refs)
+            if not refs or not refs.issubset(ids):
                 errors.append(f"candidates[{candidate_index}].{path}：字段证据必须是候选证据的无重复子集")
                 continue
             quoted = [messages[key] for key in refs if fact.quote.strip() and fact.quote in messages[key].content]
@@ -226,8 +276,14 @@ def parse_output(
                 errors.append(f"candidates[{candidate_index}].{path}：字段值必须来自引文或明确认领者标识")
 
         for path, proposal in quote_only_items:
-            refs = set(proposal.evidence_ids)
-            if not refs.issubset(ids) or len(refs) != len(proposal.evidence_ids):
+            dedup_refs = list(dict.fromkeys(proposal.evidence_ids))
+            proposal.evidence_ids = dedup_refs
+            refs = set(dedup_refs)
+            allow_context_refs = item.decision in {"update", "duplicate"} and (
+                path.startswith("type_labels[") or path == "other_reason"
+            )
+            allowed_scope = set(messages) if allow_context_refs else ids
+            if not refs or not refs.issubset(allowed_scope):
                 errors.append(f"candidates[{candidate_index}].{path}：提案证据必须是候选证据的无重复子集")
                 continue
             quoted = [messages[key] for key in refs if proposal.quote.strip() and proposal.quote in messages[key].content]
@@ -264,7 +320,12 @@ def parse_output(
             for label in item.removed_types
         }
         typed_attributes: dict[str, dict[str, dict]] = {}
+        demoted_typed_attributes: list[dict] = []
         for fact in item.typed_attributes:
+            allowed_names = TYPE_ATTRIBUTE_NAMES.get(fact.type_label, ())
+            if fact.type_label not in adopted_labels or fact.name not in allowed_names:
+                demoted_typed_attributes.append(fact.model_dump())
+                continue
             if fact.name in typed_attributes.get(fact.type_label, {}):
                 raise ContractError("同一类型的属性名称不得重复")
             typed_attributes.setdefault(fact.type_label, {})[fact.name] = fact.model_dump()
@@ -280,16 +341,18 @@ def parse_output(
             old_labels = set(old_event.types or ([] if old_event.type == PENDING_TYPE else [old_event.type])) if old_event else set()
             if not set(removed_types).issubset(old_labels):
                 raise ContractError("撤销标签必须存在于被更新事项")
-        for label, attrs in typed_attributes.items():
-            if label not in adopted_labels:
-                raise ContractError("类型专属属性必须隶属于当前类型标签")
-            if set(attrs) - set(TYPE_ATTRIBUTE_NAMES.get(label, ())):
-                raise ContractError("类型专属属性名称不属于该类型字典")
 
         flat_attributes = {fact.name: fact.value for fact in item.attributes}
         for attrs in typed_attributes.values():
             for name, fact in attrs.items():
                 flat_attributes.setdefault(name, fact["value"])
+        ext_payload = {
+            "extraction_v1": item.model_dump(
+                exclude={"summary", "evidence_ids", "basis", "possible_event_ids", "changes", "continuity"}
+            ),
+        }
+        if demoted_typed_attributes:
+            ext_payload["demoted_typed_attributes"] = demoted_typed_attributes
 
         candidate = Candidate(
             type=item.type,
@@ -300,11 +363,7 @@ def parse_output(
             severity=item.severity.value if item.severity else None,
             assignees=[fact.value for fact in item.assignees],
             attributes=flat_attributes,
-            extensions={
-                "extraction_v1": item.model_dump(
-                    exclude={"summary", "evidence_ids", "basis", "possible_event_ids", "changes", "continuity"}
-                ),
-            },
+            extensions=ext_payload,
             ambiguous=item.decision == "review",
             referenced_event_id=item.referenced_event_id,
             decision=item.decision if explicit else None,
