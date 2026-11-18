@@ -103,10 +103,10 @@ class Settings:
     llm_model: str = "gpt-6.1-sol"
     llm_max_tokens: int = 8192
     llm_timeout_seconds: int = 120
-    analysis_slots: int = 2
+    analysis_slots: int = 6
     live_reserved: int = 1
     lease_seconds: int = 30
-    fetch_ahead: int = 2
+    fetch_ahead: int = 6
     # 待确认：合理的本地缺省，不代表官方状态/等级标准。
     default_status: str = UNKNOWN
     default_severity: str = UNKNOWN
@@ -151,10 +151,10 @@ class Settings:
             llm_model=get("XHub_MODEL", "gpt-6.1-sol"),
             llm_max_tokens=int(get("XHub_MAX_TOKENS", "8192")),
             llm_timeout_seconds=int(get("XHub_TIMEOUT_SECONDS", "120")),
-            analysis_slots=int(get("ANALYSIS_SLOTS", "2")),
+            analysis_slots=int(get("ANALYSIS_SLOTS", "6")),
             live_reserved=int(get("LIVE_RESERVED", "1")),
             lease_seconds=int(get("LEASE_SECONDS", "30")),
-            fetch_ahead=int(get("FETCH_AHEAD", "2")),
+            fetch_ahead=int(get("FETCH_AHEAD", "6")),
             default_status=get("DEFAULT_STATUS", UNKNOWN),
             default_severity=get("DEFAULT_SEVERITY", UNKNOWN),
             closed_statuses=tuple(s.strip() for s in get("CLOSED_STATUSES", "").split(",") if s.strip()),

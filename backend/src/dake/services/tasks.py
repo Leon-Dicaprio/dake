@@ -27,6 +27,29 @@ class TaskService:
     def profiles(self):
         return all_profiles(self.customers)
 
+    def _pipeline_progress(self, uids, stream):
+        """读取数据库已原子提交的同流向客户权威水位，防止重启后任务游标滞后重复派单触发防倒灌。"""
+        unique = list(dict.fromkeys(uid for uid in uids if uid))
+        if not unique or not stream:
+            return {}
+        with self.runs.connection() as store:
+            if not hasattr(store, "_execute"):
+                return {}
+            placeholders = ",".join(["%s"] * len(unique))
+            try:
+                rows, _ = store._execute(
+                    f"SELECT uid, active_stream, analyzed_until, block_reason FROM uid_pipeline_state WHERE uid IN ({placeholders})",
+                    tuple(unique),
+                )
+            except Exception:
+                return {}
+        committed = {}
+        for row in rows:
+            if row.get("active_stream") == stream and row.get("analyzed_until") is not None and not row.get("block_reason"):
+                val = row["analyzed_until"]
+                committed[row["uid"]] = val.replace(tzinfo=TZ) if getattr(val, "tzinfo", None) is None else val.astimezone(TZ)
+        return committed
+
     def preview(self, config):
         value = TaskConfig.model_validate(config).model_dump()
         items = []
@@ -249,7 +272,23 @@ class TaskService:
         published = bound(state["published_until"])
         horizon = bound(state["end"])
         interval = duration(config["interval"])
+        stream = state["template"].get("analysis_stream")
+        committed_map = self._pipeline_progress(
+            [c["uid"] for c in state["children"] if c["status"] != "skipped"],
+            stream,
+        )
         for child in state["children"]:
+            uid = child["uid"]
+            committed_at = committed_map.get(uid)
+            if child["status"] == "failed" and committed_at is not None and "倒灌" in (child.get("reason") or ""):
+                if committed_at > bound(child["cursor"]):
+                    child["cursor"] = min(committed_at, horizon).isoformat()
+                    state.setdefault("customer_cursors", {})[uid] = child["cursor"]
+                    state.get("blocked_customers", {}).pop(uid, None)
+                    child["status"] = "queued"
+                    child["reason"] = None
+                    child["run_id"] = None
+                    child.pop("retry_at", None)
             if child["status"] in ("failed", "skipped", "succeeded"):
                 continue
             if child.get("retry_at") and bound(child["retry_at"]) > self.clock():
@@ -260,18 +299,23 @@ class TaskService:
                 child["status"] = run["status"]
                 continue
             if run and run["status"] == "failed":
-                self._fail_or_retry(execution, child, run)
-                continue
+                self._fail_or_retry(execution, child, run, committed_at=committed_at)
+                if child["status"] == "failed" or child.get("retry_at"):
+                    continue
             if run and run["status"] == "succeeded":
                 child["cursor"] = run["request"]["end"]
-                state.setdefault("customer_cursors", {})[child["uid"]] = child["cursor"]
+                state.setdefault("customer_cursors", {})[uid] = child["cursor"]
                 child["run_id"] = None
                 child.pop("retry_at", None)
             cursor = bound(child["cursor"])
+            if committed_at is not None and committed_at > cursor:
+                cursor = min(committed_at, horizon)
+                child["cursor"] = cursor.isoformat()
+                state.setdefault("customer_cursors", {})[uid] = child["cursor"]
             limit = published if not state.get("plan_windows", True) else min(published, horizon)
             if cursor >= horizon or (not state.get("plan_windows", True) and cursor >= published):
                 child["status"] = "succeeded"
-                state.setdefault("customer_cursors", {})[child["uid"]] = child["cursor"]
+                state.setdefault("customer_cursors", {})[uid] = child["cursor"]
                 continue
             if cursor >= limit:
                 child["status"] = "queued"
@@ -281,7 +325,7 @@ class TaskService:
             child["run_id"] = str(uuid4())
             child.setdefault("run_ids", []).append(child["run_id"])
             phase = "live" if cursor >= bound(child.get("catchup_target") or state["end"]) else "catchup"
-            request = dict(state["template"], uid=child["uid"], start=cursor.isoformat(), end=window_end.isoformat(),
+            request = dict(state["template"], uid=uid, start=cursor.isoformat(), end=window_end.isoformat(),
                 data_start=state["origin"], message_source="stored", allowed_groups=child["allowed_groups"],
                 strict_window=True, phase=phase, catchup_target=child.get("catchup_target"))
             try:
@@ -293,9 +337,21 @@ class TaskService:
                 continue
             child["status"] = "queued"
 
-    def _fail_or_retry(self, execution, child, run):
+    def _fail_or_retry(self, execution, child, run, *, committed_at=None):
         state = execution["state"]
         error = run.get("error") or "处理失败"
+        if "倒灌" in error:
+            if committed_at is None:
+                committed_at = self._pipeline_progress([child["uid"]], state["template"].get("analysis_stream")).get(child["uid"])
+            if committed_at is not None and committed_at >= bound(run["request"]["end"]):
+                child["cursor"] = min(committed_at, bound(state["end"])).isoformat()
+                state.setdefault("customer_cursors", {})[child["uid"]] = child["cursor"]
+                state.get("blocked_customers", {}).pop(child["uid"], None)
+                child["run_id"] = None
+                child["status"] = "queued"
+                child["reason"] = None
+                child.pop("retry_at", None)
+                return
         child["retries_used"] = child.get("retries_used", 0) + 1
         blocked = any(word in error for word in ("未确认", "已提交", "核实", "策略已变化", "合约已变化", "倒灌", "执行权", "模型结果未知"))
         if child["retries_used"] <= state["config"]["retries"] and not blocked:
@@ -340,15 +396,27 @@ class TaskService:
         profiles = self.profiles()
         known = {p["uid"] for p in profiles}
         profiles += [{"uid": uid, "level": None} for uid in config["uids"] if uid not in known]
+        committed_map = self._pipeline_progress(
+            [p["uid"] for p in profiles],
+            state["template"].get("analysis_stream"),
+        )
         for profile in profiles:
             uid = profile["uid"]
             cursor = bound(state.get("customer_cursors", {}).get(uid, state.get("window_start", state["start"])))
             end = bound(state["end"])
+            committed_at = committed_map.get(uid)
+            if committed_at is not None and committed_at > cursor:
+                cursor = min(committed_at, end)
             reason = eligibility(config, profile, state["frozen_uids"], self.clock())
             blocked = state.get("blocked_customers", {}).get(uid)
             if blocked:
                 prior_run = self.runs.get(blocked["run_id"], internal=True) if blocked.get("run_id") else None
-                if prior_run and prior_run.get("recovered_by"):
+                stale_backflow = (
+                    committed_at is not None
+                    and "倒灌" in (blocked.get("reason") or "")
+                    and committed_at > bound(state.get("customer_cursors", {}).get(uid, state["start"]))
+                )
+                if (prior_run and prior_run.get("recovered_by")) or stale_backflow:
                     state["blocked_customers"].pop(uid, None)
                 else:
                     children.append(dict(uid=uid, level=profile.get("level"), status="failed", reason=blocked.get("reason"),

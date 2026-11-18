@@ -326,9 +326,12 @@ def parse_output(
             if fact.type_label not in adopted_labels or fact.name not in allowed_names:
                 demoted_typed_attributes.append(fact.model_dump())
                 continue
-            if fact.name in typed_attributes.get(fact.type_label, {}):
-                raise ContractError("同一类型的属性名称不得重复")
-            typed_attributes.setdefault(fact.type_label, {})[fact.name] = fact.model_dump()
+            dumped = fact.model_dump()
+            existing_attr = typed_attributes.get(fact.type_label, {}).get(fact.name)
+            if existing_attr is not None:
+                demoted_typed_attributes.append({**existing_attr, "superseded": True})
+                dumped["evidence_ids"] = list(dict.fromkeys([*existing_attr["evidence_ids"], *dumped["evidence_ids"]]))
+            typed_attributes.setdefault(fact.type_label, {})[fact.name] = dumped
 
         if any(label not in adopted_labels for label in type_evidence):
             raise ContractError("类型证据不能指向未采用的标签")

@@ -95,13 +95,22 @@ class MySQLStore:
     def _execute(self, statement: str, args: tuple = ()) -> tuple[list[dict], int]:
         if self._closed:
             raise StorageError("数据库连接已关闭")
-        try:
-            with self._conn.cursor() as cursor:
-                count = cursor.execute(statement, args)
-                rows = list(cursor.fetchall()) if cursor.description else []
-                return rows, count
-        except pymysql.MySQLError as error:
-            raise self._safe_error(error) from None
+        # 仅在单语句自动提交且不处于客户显式事务中时，对瞬时死锁/锁等待超时做毫秒级有限退避重试。
+        can_retry_deadlock = self._transaction_uid is None and bool(self._conn.get_autocommit())
+        max_attempts = 4 if can_retry_deadlock else 1
+        for attempt in range(max_attempts):
+            try:
+                with self._conn.cursor() as cursor:
+                    count = cursor.execute(statement, args)
+                    rows = list(cursor.fetchall()) if cursor.description else []
+                    return rows, count
+            except pymysql.MySQLError as error:
+                code = error.args[0] if error.args and isinstance(error.args[0], int) else None
+                if can_retry_deadlock and code in {1205, 1213} and attempt + 1 < max_attempts:
+                    import time
+                    time.sleep(0.02 * (attempt + 1))
+                    continue
+                raise self._safe_error(error) from None
 
     def init_schema(self) -> None:
         """幂等创建消息和事件表；禁止在业务事务中执行会隐式提交的建表语句。"""

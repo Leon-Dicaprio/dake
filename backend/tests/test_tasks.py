@@ -401,3 +401,47 @@ def test_all_customer_scope_pages_beyond_500_and_includes_new_customer(service):
     eid = next(iter(service.tasks.history))
     execution = sync_done(service, eid)
     assert any(c["uid"] == "700001" and c["status"] == "queued" for c in execution["state"]["children"])
+
+
+def test_stale_cursor_reconciles_with_committed_pipeline_state_without_backflow_failure(service):
+    """重启后若数据库权威水位已领先任务游标，调度器应自动追平游标而非停留在防倒灌假失败。"""
+    service.runs.pending_messages = lambda *args: []
+    pipeline_rows = {
+        "555001": dict(
+            uid="555001",
+            active_stream="stub-v1",
+            analyzed_until=bound("2026-11-16T10:15:00+08:00").replace(tzinfo=None),
+            block_reason=None,
+        )
+    }
+
+    def fake_execute(sql, args=()):
+        if "FROM uid_pipeline_state" in sql:
+            return [pipeline_rows[uid] for uid in args if uid in pipeline_rows], len(args)
+        return [], 0
+
+    service.runs._execute = fake_execute
+    _, eid = automatic(service, scope="selected", uids=["555001"])
+    execution = sync_done(service, eid)
+    child = next(c for c in execution["state"]["children"] if c["uid"] == "555001")
+    # 首窗 [10:00 -> 10:15) 已在 uid_pipeline_state 原子提交，不应再排 10:00 的重复任务。
+    assert child["cursor"] == "2026-11-16T10:15:00+08:00"
+    assert not any(
+        r["uid"] == "555001" and r["request"]["start"] == "2026-11-16T10:00:00+08:00"
+        for r in service.runs.items.values()
+    )
+
+    # 模拟此前因重启游标滞后被误标为防倒灌失败的子任务，数据库已推进至 10:30 时应自动恢复为 succeeded。
+    execution["state"]["published_until"] = NOW.isoformat()
+    for c in execution["state"]["children"]:
+        if c["uid"] == "555001":
+            c.update(status="failed", reason="已进入实时或已有更晚结果，旧历史不能倒灌主流", cursor="2026-11-16T10:15:00+08:00", run_id=None)
+    execution["state"]["blocked_customers"]["555001"] = dict(run_id="stale-run", reason="已进入实时或已有更晚结果，旧历史不能倒灌主流", stream="stub-v1")
+    service.tasks.save_execution(execution)
+    pipeline_rows["555001"]["analyzed_until"] = NOW.replace(tzinfo=None)
+
+    service.tick(force=True)
+    recovered = next(c for c in service.tasks.execution(eid)["state"]["children"] if c["uid"] == "555001")
+    assert recovered["status"] == "succeeded"
+    assert recovered["cursor"] == NOW.isoformat()
+    assert "555001" not in service.tasks.execution(eid)["state"]["blocked_customers"]

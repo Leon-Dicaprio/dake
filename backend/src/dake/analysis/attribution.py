@@ -76,6 +76,264 @@ def attribution_version() -> str:
     return "incremental-attribution-v1-" + hashlib.sha256(value.encode()).hexdigest()[:16]
 
 
+def _find_exact_or_ws_quote(quote: str, body: str) -> str | None:
+    """在单条消息正文中查找精确子串或唯一空白无关子串；短词不跨消息猜测。"""
+    if not isinstance(quote, str) or not quote.strip():
+        return None
+    if quote in body:
+        return quote
+    needle = "".join(ch for ch in quote if not ch.isspace())
+    if not needle:
+        return None
+    positions = [idx for idx, ch in enumerate(body) if not ch.isspace()]
+    compact = "".join(body[idx] for idx in positions)
+    matches = []
+    start = compact.find(needle)
+    while start >= 0:
+        matches.append(body[positions[start] : positions[start + len(needle) - 1] + 1])
+        start = compact.find(needle, start + 1)
+    return matches[0] if len(matches) == 1 else None
+
+
+def _unique_quote_owner(quote: str, pool: list[str], msg_bodies: dict[str, str]) -> tuple[str, str] | None:
+    """仅当非短词引文在候选池中唯一命中某一条消息时，返回其真实消息键与对齐引文。"""
+    if not isinstance(quote, str) or len("".join(ch for ch in quote if not ch.isspace())) < 4:
+        return None
+    hits: list[tuple[str, str]] = []
+    for key in dict.fromkeys(pool):
+        if not isinstance(key, str) or key not in msg_bodies:
+            continue
+        matched = _find_exact_or_ws_quote(quote, msg_bodies[key])
+        if matched is not None:
+            hits.append((key, matched))
+            if len(hits) > 1:
+                return None
+    return hits[0] if len(hits) == 1 else None
+
+
+def _pre_normalize_attribution_json(
+    content: str,
+    new_messages,
+    context,
+    history_items,
+    normalizations: list[dict] | None = None,
+) -> str:
+    """对正式 JSON 输出执行严格保真的机械格式容错（邻近消息错号唯一对齐、新证据补入与旧上下文剥离）。"""
+    try:
+        payload = json.loads(content)
+    except (ValueError, TypeError):
+        return content
+    if not isinstance(payload, dict) or not isinstance(payload.get("candidates"), list):
+        return content
+
+    all_msgs = [*context, *new_messages]
+    msg_bodies = {m.key: m.content for m in all_msgs}
+    new_key_list = [m.key for m in new_messages]
+    new_keys = set(new_key_list)
+    ctx_keys = {m.key for m in context} - new_keys
+    all_key_list = [m.key for m in all_msgs]
+    hist_bodies = {
+        item["id"]: [frag.get("text", "") for frag in item.get("fragments", [])]
+        for item in (history_items or ())
+        if isinstance(item, dict) and item.get("id")
+    }
+
+    changed_any = False
+    for ci, cand in enumerate(payload["candidates"]):
+        if not isinstance(cand, dict):
+            continue
+        raw_eids = cand.get("evidence_ids")
+        if not isinstance(raw_eids, list) or not all(isinstance(k, str) for k in raw_eids):
+            continue
+        dedup_eids = list(dict.fromkeys(raw_eids))
+        if len(dedup_eids) != len(raw_eids):
+            cand["evidence_ids"] = dedup_eids
+            changed_any = True
+
+        def _ensure_in_top_evidence(key: str) -> None:
+            nonlocal changed_any
+            if key in new_keys and key not in cand["evidence_ids"]:
+                cand["evidence_ids"].append(key)
+                changed_any = True
+
+        def _record_norm(field: str, reason: str, **extra) -> None:
+            if normalizations is not None:
+                normalizations.append(dict(candidate_index=ci, field=field, reason=reason, **extra))
+
+        cand_new_pool = lambda: [k for k in cand["evidence_ids"] if k in new_keys]
+        decision = cand.get("decision")
+
+        # 1. 处理 changes：correction 漏填 replaces 归为 progress，修正邻近消息错号并补入顶层 evidence_ids
+        if isinstance(cand.get("changes"), list):
+            for ch_idx, change in enumerate(cand["changes"]):
+                if not isinstance(change, dict):
+                    continue
+                if change.get("kind") == "correction" and change.get("replaces") is None:
+                    change["kind"] = "progress"
+                    changed_any = True
+                    _record_norm(f"changes[{ch_idx}].kind", "correction_without_replaces_to_progress")
+                ev_list = change.get("evidence")
+                if not isinstance(ev_list, list):
+                    continue
+                for ref_idx, ref in enumerate(ev_list):
+                    if not isinstance(ref, dict):
+                        continue
+                    rk, rq = ref.get("message_id"), ref.get("quote")
+                    if isinstance(rk, str) and rk in msg_bodies and _find_exact_or_ws_quote(rq, msg_bodies[rk]):
+                        _ensure_in_top_evidence(rk)
+                        continue
+                    resolved = _unique_quote_owner(rq, cand_new_pool(), msg_bodies) or _unique_quote_owner(
+                        rq, new_key_list, msg_bodies
+                    )
+                    if resolved is not None:
+                        ref["message_id"], ref["quote"] = resolved
+                        _ensure_in_top_evidence(resolved[0])
+                        changed_any = True
+                        _record_norm(f"changes[{ch_idx}].evidence[{ref_idx}]", "unique_quote_message_aligned")
+
+        # 2. 处理多键证据提案与字段：唯一对齐邻近错号，并将确认属于 new_messages 的引用补入顶层 evidence_ids
+        current_only_lists = ("typed_attributes", "attributes", "extensions", "assignees", "removed_types")
+        for list_name in current_only_lists:
+            items = cand.get(list_name)
+            if not isinstance(items, list):
+                continue
+            for idx, entry in enumerate(items):
+                if not isinstance(entry, dict) or not isinstance(entry.get("evidence_ids"), list):
+                    continue
+                eq = entry.get("quote")
+                valid_keys = [
+                    k for k in entry["evidence_ids"]
+                    if isinstance(k, str) and k in msg_bodies and _find_exact_or_ws_quote(eq, msg_bodies[k])
+                ]
+                if valid_keys:
+                    for vk in valid_keys:
+                        _ensure_in_top_evidence(vk)
+                    continue
+                resolved = _unique_quote_owner(eq, cand_new_pool(), msg_bodies) or _unique_quote_owner(
+                    eq, new_key_list, msg_bodies
+                )
+                if resolved is not None:
+                    entry["evidence_ids"], entry["quote"] = [resolved[0]], resolved[1]
+                    _ensure_in_top_evidence(resolved[0])
+                    changed_any = True
+                    _record_norm(f"{list_name}[{idx}]", "unique_quote_message_aligned")
+
+        for single_name in ("status_proposal", "priority_proposal"):
+            prop = cand.get(single_name)
+            if not isinstance(prop, dict) or not isinstance(prop.get("evidence_ids"), list):
+                continue
+            pq = prop.get("quote")
+            valid_keys = [
+                k for k in prop["evidence_ids"]
+                if isinstance(k, str) and k in msg_bodies and _find_exact_or_ws_quote(pq, msg_bodies[k])
+            ]
+            if valid_keys:
+                for vk in valid_keys:
+                    _ensure_in_top_evidence(vk)
+                continue
+            resolved = _unique_quote_owner(pq, cand_new_pool(), msg_bodies) or _unique_quote_owner(
+                pq, new_key_list, msg_bodies
+            )
+            if resolved is not None:
+                prop["evidence_ids"], prop["quote"] = [resolved[0]], resolved[1]
+                _ensure_in_top_evidence(resolved[0])
+                changed_any = True
+                _record_norm(single_name, "unique_quote_message_aligned")
+
+        allow_ctx_for_cls = decision in {"update", "duplicate"}
+        cls_fallback_pool = all_key_list if allow_ctx_for_cls else new_key_list
+        if isinstance(cand.get("type_labels"), list):
+            for idx, lbl in enumerate(cand["type_labels"]):
+                if not isinstance(lbl, dict) or not isinstance(lbl.get("evidence_ids"), list):
+                    continue
+                lq = lbl.get("quote")
+                valid_keys = [
+                    k for k in lbl["evidence_ids"]
+                    if isinstance(k, str) and k in msg_bodies and _find_exact_or_ws_quote(lq, msg_bodies[k])
+                ]
+                if valid_keys:
+                    for vk in valid_keys:
+                        _ensure_in_top_evidence(vk)
+                    continue
+                resolved = _unique_quote_owner(lq, cand["evidence_ids"], msg_bodies) or _unique_quote_owner(
+                    lq, cls_fallback_pool, msg_bodies
+                )
+                if resolved is not None:
+                    lbl["evidence_ids"], lbl["quote"] = [resolved[0]], resolved[1]
+                    _ensure_in_top_evidence(resolved[0])
+                    changed_any = True
+                    _record_norm(f"type_labels[{idx}]", "unique_quote_message_aligned")
+
+        other_rsn = cand.get("other_reason")
+        if isinstance(other_rsn, dict) and isinstance(other_rsn.get("evidence_ids"), list):
+            oq = other_rsn.get("quote")
+            valid_keys = [
+                k for k in other_rsn["evidence_ids"]
+                if isinstance(k, str) and k in msg_bodies and _find_exact_or_ws_quote(oq, msg_bodies[k])
+            ]
+            if valid_keys:
+                for vk in valid_keys:
+                    _ensure_in_top_evidence(vk)
+            else:
+                resolved = _unique_quote_owner(oq, cand["evidence_ids"], msg_bodies) or _unique_quote_owner(
+                    oq, cls_fallback_pool, msg_bodies
+                )
+                if resolved is not None:
+                    other_rsn["evidence_ids"], other_rsn["quote"] = [resolved[0]], resolved[1]
+                    _ensure_in_top_evidence(resolved[0])
+                    changed_any = True
+                    _record_norm("other_reason", "unique_quote_message_aligned")
+
+        # 3. 处理 basis 中已知消息的邻近错号（未知历史 ID 保持原样交由下游核验）
+        if isinstance(cand.get("basis"), list):
+            for b_idx, bref in enumerate(cand["basis"]):
+                if not isinstance(bref, dict):
+                    continue
+                bk, bq = bref.get("message_id"), bref.get("quote")
+                if not isinstance(bk, str) or not isinstance(bq, str):
+                    continue
+                in_avail_ok = bk in msg_bodies and _find_exact_or_ws_quote(bq, msg_bodies[bk]) is not None
+                in_hist_ok = bk in hist_bodies and any(bq in frag for frag in hist_bodies[bk])
+                if in_avail_ok or in_hist_ok or (bk not in msg_bodies and bk not in hist_bodies):
+                    continue
+                resolved = _unique_quote_owner(bq, all_key_list, msg_bodies)
+                if resolved is not None:
+                    bref["message_id"], bref["quote"] = resolved
+                    changed_any = True
+                    _record_norm(f"basis[{b_idx}]", "unique_quote_message_aligned")
+
+        # 4. 当候选已包含至少 1 条合法 new_messages 时，剥离误混入顶层 evidence_ids 的旧上下文 ID 与未变化旧字段
+        has_real_new = any(k in new_keys for k in cand["evidence_ids"])
+        if has_real_new:
+            for list_name in ("typed_attributes", "attributes", "extensions", "assignees"):
+                items = cand.get(list_name)
+                if isinstance(items, list):
+                    kept_items = [
+                        entry for entry in items
+                        if not isinstance(entry, dict)
+                        or not isinstance(entry.get("evidence_ids"), list)
+                        or any(k in new_keys for k in entry["evidence_ids"])
+                    ]
+                    if len(kept_items) != len(items):
+                        cand[list_name] = kept_items
+                        changed_any = True
+                        _record_norm(list_name, "context_only_unchanged_fields_stripped")
+            for single_name in ("status_proposal", "priority_proposal"):
+                prop = cand.get(single_name)
+                if isinstance(prop, dict) and isinstance(prop.get("evidence_ids"), list):
+                    if prop["evidence_ids"] and not any(k in new_keys for k in prop["evidence_ids"]):
+                        cand[single_name] = None
+                        changed_any = True
+                        _record_norm(single_name, "context_only_unchanged_proposal_stripped")
+            mixed_ctx = [k for k in cand["evidence_ids"] if k in ctx_keys]
+            if mixed_ctx and decision in {"new", "update", "duplicate"}:
+                cand["evidence_ids"] = [k for k in cand["evidence_ids"] if k not in ctx_keys]
+                changed_any = True
+                _record_norm("evidence_ids", "mixed_context_ids_stripped", stripped=mixed_ctx)
+
+    return json.dumps(payload, ensure_ascii=False) if changed_any else content
+
+
 def parse_attribution_output(
     content,
     new_messages,
@@ -88,6 +346,9 @@ def parse_attribution_output(
 ):
     """沿用字段及来源校验；关联依据在业务入口按当前窗口再次核对。"""
     content = align_quotes(content, [*context, *new_messages])
+    content = _pre_normalize_attribution_json(
+        content, new_messages, context, history_items, normalizations=normalizations
+    )
     available = evidence_map([*context, *new_messages])
     try:
         candidates = parse_output(

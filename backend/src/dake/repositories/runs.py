@@ -290,46 +290,57 @@ class RunRepository:
     def _claim(self, runner_id: str, *, source: bool) -> dict | None:
         lease = int(getattr(self.settings, "lease_seconds", 30))
         slots = int(getattr(self.settings, "analysis_slots", 2))
-        with self.connection() as store:
-            with store.metadata_transaction():
-                resource = "fetch" if source else "analysis"
-                limit = 1 if source else slots
-                free, _ = store._execute("""SELECT slot, held_reason FROM runtime_limits
-                    WHERE resource=%s AND slot<%s AND (owner IS NULL OR lease_until<NOW(6))
-                    ORDER BY slot FOR UPDATE SKIP LOCKED""", (resource, limit))
-                if not free:
-                    return None
-                if source:
-                    rows, _ = store._execute("""SELECT run_id, uid, 'live' AS phase FROM processing_runs
-                        WHERE status='queued' AND mode='customer_sync' ORDER BY created_at, run_id LIMIT 8""")
-                else:
-                    rows, _ = store._execute("""SELECT r.run_id, r.uid,
-                        COALESCE(JSON_UNQUOTE(JSON_EXTRACT(r.request,'$.phase')),'live') AS phase
-                        FROM processing_runs r
-                        LEFT JOIN uid_pipeline_state p ON p.uid=r.uid
-                        WHERE r.status='queued' AND r.mode<>'customer_sync'
-                        AND (p.uid IS NULL OR (p.block_reason IS NULL AND p.owner IS NULL))
-                        AND NOT EXISTS (SELECT 1 FROM processing_runs a WHERE a.uid=r.uid AND a.status='running'
-                            AND a.mode<>'customer_sync')
-                        ORDER BY p.last_served_at IS NULL DESC, p.last_served_at, r.created_at, r.run_id LIMIT 32""")
-                chosen = None
-                slot = None
-                for row in rows:
-                    phase = row.get("phase") or "live"
-                    slot = next((item for item in free if source or item["held_reason"] != "live" or phase == "live"), None)
-                    if slot is None:
-                        continue
-                    _, changed = store._execute("""UPDATE processing_runs SET status='running', runner_id=%s, started_at=%s
-                        WHERE run_id=%s AND status='queued'""", (runner_id, _now(), row["run_id"]))
-                    if changed == 1:
-                        chosen = row["run_id"]
-                        break
-                if chosen is None:
-                    return None
-                store._execute("""UPDATE runtime_limits SET owner=%s, epoch=epoch+1,
-                    lease_until=DATE_ADD(NOW(6), INTERVAL %s SECOND)
-                    WHERE resource=%s AND slot=%s""", (runner_id, lease, resource, slot["slot"]))
-                held = slot["slot"]
+        chosen = None
+        held = None
+        for attempt in range(3):
+            try:
+                with self.connection() as store:
+                    with store.metadata_transaction():
+                        resource = "fetch" if source else "analysis"
+                        limit = 1 if source else slots
+                        free, _ = store._execute("""SELECT slot, held_reason FROM runtime_limits
+                            WHERE resource=%s AND slot<%s AND (owner IS NULL OR lease_until<NOW(6))
+                            ORDER BY slot FOR UPDATE SKIP LOCKED""", (resource, limit))
+                        if not free:
+                            return None
+                        if source:
+                            rows, _ = store._execute("""SELECT run_id, uid, 'live' AS phase FROM processing_runs
+                                WHERE status='queued' AND mode='customer_sync' ORDER BY created_at, run_id LIMIT 8""")
+                        else:
+                            rows, _ = store._execute("""SELECT r.run_id, r.uid,
+                                COALESCE(JSON_UNQUOTE(JSON_EXTRACT(r.request,'$.phase')),'live') AS phase
+                                FROM processing_runs r
+                                LEFT JOIN uid_pipeline_state p ON p.uid=r.uid
+                                WHERE r.status='queued' AND r.mode<>'customer_sync'
+                                AND (p.uid IS NULL OR (p.block_reason IS NULL AND p.owner IS NULL))
+                                AND NOT EXISTS (SELECT 1 FROM processing_runs a WHERE a.uid=r.uid AND a.status='running'
+                                    AND a.mode<>'customer_sync')
+                                ORDER BY p.last_served_at IS NULL DESC, p.last_served_at, r.created_at, r.run_id LIMIT 32""")
+                        chosen = None
+                        slot = None
+                        for row in rows:
+                            phase = row.get("phase") or "live"
+                            slot = next((item for item in free if source or item["held_reason"] != "live" or phase == "live"), None)
+                            if slot is None:
+                                continue
+                            _, changed = store._execute("""UPDATE processing_runs SET status='running', runner_id=%s, started_at=%s
+                                WHERE run_id=%s AND status='queued'""", (runner_id, _now(), row["run_id"]))
+                            if changed == 1:
+                                chosen = row["run_id"]
+                                break
+                        if chosen is None:
+                            return None
+                        store._execute("""UPDATE runtime_limits SET owner=%s, epoch=epoch+1,
+                            lease_until=DATE_ADD(NOW(6), INTERVAL %s SECOND)
+                            WHERE resource=%s AND slot=%s""", (runner_id, lease, resource, slot["slot"]))
+                        held = slot["slot"]
+                break
+            except StorageError as error:
+                if any(code in str(error) for code in ("1213", "1205")) and attempt < 2:
+                    import time
+                    time.sleep(0.02 * (attempt + 1))
+                    continue
+                raise
         claimed = self.get(chosen, internal=True)
         if claimed is not None:
             claimed["_capacity_slot"] = held

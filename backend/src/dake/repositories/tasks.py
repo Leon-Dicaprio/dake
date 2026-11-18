@@ -62,8 +62,14 @@ class TaskRepository(RunRepository):
 
     def list(self):
         with self.connection() as store:
-            rows, _ = store._execute("SELECT * FROM task_definitions ORDER BY created_at DESC")
-        return [record(row) for row in rows]
+            heads, _ = store._execute("SELECT task_id FROM task_definitions ORDER BY created_at DESC")
+            ids = [row["task_id"] for row in heads]
+            if not ids:
+                return []
+            placeholders = ",".join(["%s"] * len(ids))
+            rows, _ = store._execute(f"SELECT * FROM task_definitions WHERE task_id IN ({placeholders})", tuple(ids))
+        by_id = {row["task_id"]: record(row) for row in rows}
+        return [by_id[tid] for tid in ids if tid in by_id]
 
     def update_config(self, task_id, config, version, frozen_uids):
         with self.locked(task_id) as store:

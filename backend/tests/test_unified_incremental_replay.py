@@ -716,3 +716,128 @@ def test_other_category_cross_window_update_and_basis_completion():
     assert cand.other_reason["evidence_ids"] == [m_ctx.key]
     assert any(ref["message_id"] == m_new.key for ref in cand.basis)
     assert any(item["reason"] == "verified_change_quote_completed_basis" for item in normalizations)
+
+
+def test_burst_neighbor_quote_alignment_duplicate_attrs_and_context_stripping():
+    """验证连发消息邻近错号唯一对齐、同名专属属性合并、混入旧上下文证据剥离与无目标 correction 降级。"""
+    from dake.domain.models import Event
+
+    m_ctx = msg("b0", "2026-11-10 09:50:00", "合成消息：华东直播域名 stream-east.example 偶发 502 报错。")
+    m_new_1 = msg("b1", "2026-11-10 10:01:00", "合成消息：补充复现时间段为上午 09:40 至 09:48。")
+    m_new_2 = msg("b2", "2026-11-10 10:01:05", "合成消息：边缘节点回源探测发现上游网关连接池耗尽，已扩容恢复观察。")
+    old_event = Event(
+        event_id="evt-burst-1",
+        uid=UID,
+        stream="syn-stream",
+        type="排障",
+        types=["排障"],
+        classification_status="已分类",
+        topic_key="live:stream-east-502",
+        start_time=m_ctx.sent_at,
+        end_time=m_ctx.sent_at,
+        status="跟进中",
+        severity="P2",
+        summary="华东直播域名偶发 502 报错",
+        created_on=m_ctx.sent_at,
+        evidence=[{"source": m_ctx.source, "message_id": m_ctx.message_id, "digest": m_ctx.digest}],
+    )
+
+    raw_json = json.dumps(
+        {
+            "schema_version": "4.0",
+            "candidates": [
+                {
+                    "type": "排障",
+                    "classification_status": "已分类",
+                    "type_labels": [
+                        {"type": "排障", "evidence_ids": [m_ctx.key], "quote": "偶发 502 报错"}
+                    ],
+                    "removed_types": [],
+                    "typed_attributes": [
+                        # 模拟混入仅引用旧上下文的未变属性（应自动剥离）
+                        {
+                            "type_label": "排障",
+                            "name": "异常对象与环境",
+                            "value": "stream-east.example",
+                            "evidence_ids": [m_ctx.key],
+                            "quote": "华东直播域名 stream-east.example",
+                        },
+                        # 模拟同一类型下重复输出两条同名属性（应合并保留最新一条）
+                        {
+                            "type_label": "排障",
+                            "name": "排查发现与根因",
+                            "value": "上午 09:40 至 09:48",
+                            "evidence_ids": [m_new_1.key],
+                            "quote": "复现时间段为上午 09:40 至 09:48",
+                        },
+                        {
+                            "type_label": "排障",
+                            "name": "排查发现与根因",
+                            "value": "上游网关连接池耗尽",
+                            "evidence_ids": [m_new_1.key],  # 故意错写成紧邻的 b1，引文实际在 b2 中唯一出现
+                            "quote": "上游网关连接池耗尽",
+                        },
+                    ],
+                    "other_reason": None,
+                    "topic_key": "live:stream-east-502",
+                    "summary": "定位上游网关连接池耗尽并已扩容观察",
+                    # 故意混入旧上下文 m_ctx.key 且漏写 m_new_2.key
+                    "evidence_ids": [m_ctx.key, m_new_1.key],
+                    "status": None,
+                    "severity": None,
+                    "status_proposal": None,
+                    "priority_proposal": None,
+                    "assignees": [],
+                    "attributes": [],
+                    "extensions": [],
+                    "decision": "update",
+                    "referenced_event_id": "evt-burst-1",
+                    "possible_event_ids": [],
+                    "decision_reason": "延续同一华东直播 502 故障排查",
+                    "basis": [
+                        {"message_id": m_ctx.key, "quote": "华东直播域名 stream-east.example 偶发 502 报错"},
+                        {"message_id": m_new_1.key, "quote": "补充复现时间段为上午 09:40 至 09:48"},
+                    ],
+                    "continuity": None,
+                    "changes": [
+                        {
+                            "kind": "correction",  # 故意漏填 replaces=None，应降级为 progress
+                            "text": "定位上游网关连接池耗尽并已扩容恢复观察",
+                            "replaces": None,
+                            # 故意把 b2 的引文错标在邻近消息 b1 上
+                            "evidence": [{"message_id": m_new_1.key, "quote": "边缘节点回源探测发现上游网关连接池耗尽，已扩容恢复观察"}],
+                        }
+                    ],
+                }
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+    normalizations = []
+    parsed = parse_attribution_output(
+        raw_json,
+        [m_new_1, m_new_2],
+        [m_ctx],
+        [old_event],
+        normalizations=normalizations,
+        require_type_labels=True,
+    )
+    assert len(parsed) == 1
+    cand = parsed[0]
+    # 顶层 evidence_ids 已自动补入 b2 并剥离混入的旧上下文 b0
+    assert cand.evidence_ids == [m_new_1.key, m_new_2.key]
+    # changes[0] 已降级为 progress 且证据 message_id 已唯一对齐至 b2
+    assert cand.changes[0]["kind"] == "progress"
+    assert cand.changes[0]["evidence"][0]["message_id"] == m_new_2.key
+    # 仅引用旧上下文的『异常对象与环境』已剥离；两条『排查发现与根因』已合并保留最新值并聚合证据
+    assert set(cand.typed_attributes["排障"]) == {"排查发现与根因"}
+    assert cand.typed_attributes["排障"]["排查发现与根因"]["value"] == "上游网关连接池耗尽"
+    assert cand.typed_attributes["排障"]["排查发现与根因"]["evidence_ids"] == [m_new_1.key, m_new_2.key]
+    reasons = {item["reason"] for item in normalizations}
+    assert {
+        "correction_without_replaces_to_progress",
+        "unique_quote_message_aligned",
+        "context_only_unchanged_fields_stripped",
+        "mixed_context_ids_stripped",
+    } <= reasons
