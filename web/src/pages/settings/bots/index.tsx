@@ -1,6 +1,6 @@
 import { Bot, Pencil, RefreshCw, Search } from 'lucide-react';
 import { useState } from 'react';
-import { ErrorNotice, LoadingRows } from '@/components/Feedback';
+import { ErrorNotice, LoadingRows, SuccessToast } from '@/components/Feedback';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeading } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -91,12 +91,14 @@ export default function BotSettingsPage() {
       <header className="page-header">
         <div>
           <h1>机器人筛选</h1>
-          {rules.data && (
-            <p>
-              {enabledCount} 条规则已启用 · {items.length - enabledCount}{' '}
-              条已停用
-            </p>
-          )}
+          <p className="bot-rule-count">
+            {rules.data && (
+              <>
+                {enabledCount} 条规则已启用 · {items.length - enabledCount}{' '}
+                条已停用
+              </>
+            )}
+          </p>
         </div>
         <Button
           variant="ghost"
@@ -109,11 +111,7 @@ export default function BotSettingsPage() {
           刷新
         </Button>
       </header>
-      {notice && (
-        <p role="status" className="bot-save-notice">
-          {notice}
-        </p>
-      )}
+      <SuccessToast message={notice} onDismiss={() => setNotice('')} />
       {rules.error && (
         <ErrorNotice message={rules.error} retry={rules.refresh} />
       )}
@@ -137,78 +135,83 @@ export default function BotSettingsPage() {
         </TabsList>
         <TabsContent value="rules">
           <section aria-label="已配置账号" className="bot-table-panel">
-            {rules.loading && !rules.data ? (
-              <LoadingRows />
-            ) : (
-              <table className="bot-rule-table">
-                <thead>
-                  <tr>
-                    <th>账号</th>
-                    <th>适用范围</th>
-                    <th>身份</th>
-                    <th>状态</th>
-                    <th>操作</th>
+            <table className="bot-rule-table">
+              <thead>
+                <tr>
+                  <th>账号</th>
+                  <th>适用范围</th>
+                  <th>身份</th>
+                  <th>状态</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody aria-busy={rules.loading}>
+                {items.map((item) => (
+                  <tr key={item.rule_id}>
+                    <td>
+                      <strong>{item.label || item.sender_id}</strong>
+                      <small>{item.sender_id}</small>
+                    </td>
+                    <td>
+                      客户 {item.uid}
+                      <small>
+                        {item.conversation_id
+                          ? `指定群：${item.conversation_id}`
+                          : '该客户的全部群'}
+                      </small>
+                    </td>
+                    <td>{identities[item.kind || 'bot']}</td>
+                    <td>
+                      <span
+                        className={`bot-status ${item.enabled ? 'enabled' : ''}`}
+                      >
+                        {item.enabled ? '已启用' : '已停用'}
+                      </span>
+                    </td>
+                    <td className="bot-row-actions">
+                      <Button
+                        size="small"
+                        variant="ghost"
+                        disabled={busy || rules.loading}
+                        onClick={() => edit(item)}
+                      >
+                        <Pencil size={14} />
+                        编辑
+                      </Button>
+                      <Button
+                        size="small"
+                        disabled={busy || rules.loading}
+                        onClick={() => {
+                          const { rule_id, ...rule } = item;
+                          void save(
+                            { ...rule, enabled: !item.enabled },
+                            rule_id,
+                          );
+                        }}
+                      >
+                        {item.enabled ? '停用' : '启用'}
+                      </Button>
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {items.map((item) => (
-                    <tr key={item.rule_id}>
-                      <td>
-                        <strong>{item.label || item.sender_id}</strong>
-                        <small>{item.sender_id}</small>
-                      </td>
-                      <td>
-                        客户 {item.uid}
-                        <small>
-                          {item.conversation_id
-                            ? `指定群：${item.conversation_id}`
-                            : '该客户的全部群'}
-                        </small>
-                      </td>
-                      <td>{identities[item.kind || 'bot']}</td>
-                      <td>
-                        <span
-                          className={`bot-status ${item.enabled ? 'enabled' : ''}`}
-                        >
-                          {item.enabled ? '已启用' : '已停用'}
-                        </span>
-                      </td>
-                      <td className="bot-row-actions">
-                        <Button
-                          size="small"
-                          variant="ghost"
-                          disabled={busy || rules.loading}
-                          onClick={() => edit(item)}
-                        >
-                          <Pencil size={14} />
-                          编辑
-                        </Button>
-                        <Button
-                          size="small"
-                          disabled={busy || rules.loading}
-                          onClick={() => {
-                            const { rule_id, ...rule } = item;
-                            void save(
-                              { ...rule, enabled: !item.enabled },
-                              rule_id,
-                            );
-                          }}
-                        >
-                          {item.enabled ? '停用' : '启用'}
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                  {!items.length && (
+                ))}
+                {rules.loading && !rules.data ? (
+                  <tr>
+                    <td colSpan={5}>
+                      <LoadingRows count={2} />
+                    </td>
+                  </tr>
+                ) : (
+                  !rules.error &&
+                  !items.length && (
                     <tr>
                       <td colSpan={5} className="bot-empty">
                         暂无配置，先从已同步的消息中查找账号。
                       </td>
                     </tr>
-                  )}
-                </tbody>
-              </table>
-            )}
+                  )
+                )}
+              </tbody>
+            </table>
           </section>
         </TabsContent>
         <TabsContent value="search">
@@ -244,60 +247,69 @@ export default function BotSettingsPage() {
                 retry={candidates.refresh}
               />
             )}
-            {candidates.loading ? (
-              <LoadingRows />
-            ) : (
-              <div className="bot-table-panel">
-                <table className="bot-rule-table">
-                  <thead>
-                    <tr>
-                      <th>发送账号</th>
-                      <th>客户与群</th>
-                      <th>已接收消息</th>
-                      <th>当前身份</th>
-                      <th>操作</th>
+            <div className="bot-table-panel">
+              <table className="bot-rule-table">
+                <thead>
+                  <tr>
+                    <th>发送账号</th>
+                    <th>客户与群</th>
+                    <th>已接收消息</th>
+                    <th>当前身份</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody aria-busy={candidates.loading}>
+                  {candidates.data?.items.map((item) => (
+                    <tr key={item.rule_id}>
+                      <td>
+                        <strong>{item.sender_name}</strong>
+                        <small>{item.sender_id}</small>
+                      </td>
+                      <td>
+                        客户 {item.uid}
+                        <small>{item.conversation_name}</small>
+                      </td>
+                      <td>
+                        {item.message_count} 条
+                        <small>{formatTime(item.last_seen_at)}</small>
+                      </td>
+                      <td>{identities[item.sender_kind]}</td>
+                      <td>
+                        <Button
+                          size="small"
+                          disabled={busy || !rules.data || rules.loading}
+                          onClick={() => select(item)}
+                        >
+                          {item.configured ? '编辑配置' : '配置账号'}
+                        </Button>
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {candidates.data?.items.map((item) => (
-                      <tr key={item.rule_id}>
-                        <td>
-                          <strong>{item.sender_name}</strong>
-                          <small>{item.sender_id}</small>
-                        </td>
-                        <td>
-                          客户 {item.uid}
-                          <small>{item.conversation_name}</small>
-                        </td>
-                        <td>
-                          {item.message_count} 条
-                          <small>{formatTime(item.last_seen_at)}</small>
-                        </td>
-                        <td>{identities[item.sender_kind]}</td>
-                        <td>
-                          <Button
-                            size="small"
-                            disabled={busy || !rules.data || rules.loading}
-                            onClick={() => select(item)}
-                          >
-                            {item.configured ? '编辑配置' : '配置账号'}
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
-                    {!candidates.data?.items.length && (
+                  ))}
+                  {candidates.loading && !candidates.data ? (
+                    <tr>
+                      <td colSpan={5}>
+                        <LoadingRows count={2} />
+                      </td>
+                    </tr>
+                  ) : (
+                    !candidates.error &&
+                    !candidates.data?.items.length && (
                       <tr>
                         <td colSpan={5} className="bot-empty">
                           未找到匹配账号，可在相关消息同步后再查找。
                         </td>
                       </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                    )
+                  )}
+                </tbody>
+              </table>
+            </div>
             <div className="bot-paging">
-              <span>共 {candidates.data?.total || 0} 条账号与群记录</span>
+              <span>
+                {candidates.data
+                  ? `共 ${candidates.data.total} 条账号与群记录`
+                  : ''}
+              </span>
               <Button
                 size="small"
                 disabled={offset === 0 || candidates.loading}

@@ -180,6 +180,10 @@ export default function EventsPage() {
   ]);
 
   const selected = visible.find((event) => event.event_id === eventId);
+  const awaitingDetails =
+    (workspace.loading && !workspace.data) ||
+    (events.loading && !events.data) ||
+    (visible.length > 0 && !dismissed.current);
   const activeUid = isAllCustomers
     ? selected?.uid || workspace.data?.uid || ''
     : uid;
@@ -360,13 +364,23 @@ export default function EventsPage() {
                       onClick={() => update({ event: event.event_id })}
                     >
                       <span className="event-row-meta">
-                        <span
-                          className="event-row-customer"
-                          title={`UID ${event.uid}`}
-                        >
-                          {isAllCustomers
-                            ? eventCustomer?.label || `客户 ${event.uid}`
-                            : rowLabels.join('、')}
+                        <span className="event-row-identity">
+                          <span
+                            className="event-row-customer"
+                            title={`UID ${event.uid}`}
+                          >
+                            {isAllCustomers
+                              ? eventCustomer?.label || `客户 ${event.uid}`
+                              : rowLabels.join('、')}
+                          </span>
+                          {badge && (
+                            <span
+                              className={`event-customer-tag ${badge.kind}`}
+                            >
+                              {badge.kind === 'super' && <Crown size={11} />}
+                              {badge.short}
+                            </span>
+                          )}
                         </span>
                         <time dateTime={event.end_time}>
                           {formatTime(event.end_time)}
@@ -384,14 +398,11 @@ export default function EventsPage() {
                         />
                         <StatusBadge status={event.lifecycle_status} compact />
                         {isAllCustomers && (
-                          <span className="event-row-types">
+                          <span
+                            className="event-row-types"
+                            title={rowLabels.join('、')}
+                          >
                             {rowLabels.join('、')}
-                          </span>
-                        )}
-                        {badge && (
-                          <span className={`event-customer-tag ${badge.kind}`}>
-                            {badge.kind === 'super' && <Crown size={11} />}
-                            {badge.short}
                           </span>
                         )}
                         {event.review_flag ? (
@@ -437,10 +448,14 @@ export default function EventsPage() {
           />
         ) : (
           <section className="inbox-chat">
-            <EmptyState
-              title="选择事件查看原文与详情"
-              description="没有数据时，请到任务中心配置并执行任务。"
-            />
+            {workspace.error || events.error ? null : awaitingDetails ? (
+              <LoadingRows count={2} />
+            ) : (
+              <EmptyState
+                title="选择事件查看原文与详情"
+                description="没有数据时，请到任务中心配置并执行任务。"
+              />
+            )}
           </section>
         )}
       </div>

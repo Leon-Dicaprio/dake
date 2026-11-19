@@ -468,7 +468,6 @@ body:has(.events-workspace) { overflow: hidden; }
 .event-row-sub {
   grid-column: 1 / -1;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 3px 8px;
   min-width: 0;
@@ -479,9 +478,12 @@ body:has(.events-workspace) { overflow: hidden; }
 }
 .event-row-sub:empty { display: none; }
 .event-row-meta { display: flex; justify-content: space-between; gap: 8px; align-items: center; color: var(--muted); font-size: 11px; }
+.event-row-identity { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.event-row-identity .event-customer-tag { flex: none; }
 .event-row-meta time { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .event-row-customer { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #535c55; font-size: 12px; }
-.event-row-types { color: var(--muted); }
+.event-row-sub > :not(.event-row-types) { flex: none; white-space: nowrap; }
+.event-row-types { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 .event-row-sub .priority-pill.pending, .event-row-sub .lifecycle-pill { padding-inline: 0; background: none; font-size: 11px; }
 .change-tag { margin-left: auto; color: var(--accent-text); }
 
@@ -1218,18 +1220,25 @@ select:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2p
 }
 .classification-note blockquote { margin: 6px 0 0; padding-left: 8px; border-left: 2px solid #cbd5e1; color: #64748b; }
 .typed-attr-groups { display: grid; gap: 10px; margin-bottom: 10px; }
-.typed-attr-card {
-  padding: 10px 11px;
-  border: 1px solid #ececef;
-  border-radius: 7px;
-  background: #fafafa;
+.typed-attr-card { min-width: 0; overflow-wrap: anywhere; }
+.typed-attr-header { margin-bottom: 10px; }
+.attr-list-toggle { color: var(--accent-text); font-size: 12px; padding-block: 4px; }
+.attr-list-toggle:hover { text-decoration: underline; }
+.typed-attr-list { margin: 0; }
+.typed-attr-list > div {
+  display: grid;
+  grid-template-columns: minmax(4em, 24%) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 12px;
+  padding-block: 9px;
+  border-top: 1px solid var(--line);
 }
-.typed-attr-header { margin-bottom: 8px; }
-.typed-attr-list { display: grid; gap: 7px; margin: 0; }
-.typed-attr-list > div { display: grid; gap: 2px; }
-.typed-attr-list dt { font-size: 11px; color: #71717a; }
-.typed-attr-list dd { margin: 0; font-size: 12px; color: #18181b; line-height: 1.5; }
-.typed-attr-proof { display: block; margin-top: 2px; font-size: 11px; color: #71717a; }
+.typed-attr-list dt { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.typed-attr-list dd { min-width: 0; margin: 0; color: var(--ink); font-size: 13px; line-height: 1.6; }
+.typed-attr-list dd > span { white-space: pre-wrap; }
+.typed-attr-proof { margin-top: 3px; font-size: 12px; color: var(--muted); }
+.typed-attr-proof summary { width: fit-content; cursor: pointer; }
+.typed-attr-proof blockquote { margin: 5px 0; padding-left: 8px; border-left: 2px solid var(--line); white-space: pre-wrap; }
 .type-evidence-list { display: grid; gap: 8px; margin-top: 8px; }
 .type-evidence-group strong { display: block; font-size: 12px; margin-bottom: 4px; color: #27272a; }
 .type-evidence-group blockquote { margin: 4px 0; padding: 6px 9px; background: var(--canvas); border-radius: 4px; font-size: 12px; }
@@ -1359,3 +1368,8 @@ select:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2p
 .message-image-preview::backdrop { background: rgb(0 0 0 / 70%); }
 .message-image-preview button { display: block; margin: 0 0 8px auto; }
 .message-image-preview img { display: block; max-width: 88vw; max-height: 80dvh; object-fit: contain; }
+
+.success-toast-viewport { position: fixed; z-index: 80; right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); max-width: calc(100vw - 32px); }
+.success-toast { display: flex; align-items: center; gap: 9px; padding: 10px 12px; background: white; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 3px 14px #18231d1c; font-size: 14px; overflow-wrap: anywhere; }
+.success-toast > svg { flex: none; color: #356941; }
+.success-toast button { flex: none; padding: 4px; }

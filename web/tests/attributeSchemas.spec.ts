@@ -140,8 +140,17 @@ test('规则按需展开，编辑名称和停用操作保留字段的其他配�
       agg_ops: ['avg'],
     },
   });
+  const tabs = page.getByRole('tablist', { name: '属性配置视图' });
+  const top = await tabs.evaluate(
+    (element) => element.getBoundingClientRect().top,
+  );
   await toggle.click();
   await expect(toggle).not.toBeChecked();
+  await page.getByRole('button', { name: '关闭提示' }).click();
+  await expect(tabs).toBeVisible();
+  expect(
+    await tabs.evaluate((element) => element.getBoundingClientRect().top),
+  ).toBe(top);
   expect(saved[1]).toMatchObject({
     expected_version: 5,
     field: { enabled: false },
@@ -232,4 +241,34 @@ test('指标按配置展示，补齐当前范围使用汇总页的两个筛选�
       use_llm: true,
     },
   ]);
+});
+
+test('部分失败可回看结果，查看结果不会再次提交', async ({ page }) => {
+  const { backfills } = await mockSchemas(page);
+  await page.route('**/backfill-job', (route) => {
+    expect(route.request().method()).toBe('GET');
+    return route.fulfill({
+      json: {
+        status: 'completed',
+        job_id: 'synthetic',
+        result: {
+          scanned: 150,
+          updated: 147,
+          failed: 3,
+          llm_enriched: 0,
+          stream: 'synthetic',
+          schema_version: 4,
+        },
+      },
+    });
+  });
+  await page.goto('/settings/schemas');
+  const result = page.getByRole('button', { name: '失败 3 条，查看补齐结果' });
+  await result.click();
+  await expect(page.getByRole('dialog')).toContainText('更新 147 条');
+  await page.keyboard.press('Escape');
+  await expect(result).toBeFocused();
+  await page.reload();
+  await expect(result).toBeVisible();
+  expect(backfills).toHaveLength(0);
 });

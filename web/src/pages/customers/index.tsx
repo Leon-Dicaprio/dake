@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'umi';
-import { ErrorNotice, LoadingRows } from '@/components/Feedback';
+import { ErrorNotice } from '@/components/Feedback';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -181,6 +181,13 @@ export default function CustomersPage() {
   const profile = workspace.data?.customers.find(
     (item) => item.uid === selectedUid,
   );
+  const name = profile?.label?.trim();
+  const hasCustomerName = Boolean(
+    name &&
+      name !== selectedUid &&
+      name.replace(/\s/g, '') !== `客户${selectedUid}`,
+  );
+  const eventCount = savedEventCount(profile);
   const customerInfo = (value: string) =>
     workspace.data?.customers.find((item) => item.uid === value);
   const syncs = useResource('customer-syncs', api.customerSyncs, 3000);
@@ -351,133 +358,144 @@ export default function CustomersPage() {
                 retry={customers.refresh}
               />
             )}
-            {!customers.data && customers.loading ? (
-              <LoadingRows />
-            ) : (
-              <div className="customer-table-scroll">
-                <table className="customer-table">
-                  <thead>
+            <div className="customer-table-scroll">
+              <table className="customer-table">
+                <thead>
+                  <tr>
+                    <th>客户</th>
+                    <th>分级</th>
+                    <th>主 TAM</th>
+                    <th>关联群</th>
+                    <th>消息数</th>
+                    <th>事件数</th>
+                  </tr>
+                </thead>
+                <tbody aria-busy={customers.loading}>
+                  {!customers.data && customers.loading && (
                     <tr>
-                      <th>客户</th>
-                      <th>分级</th>
-                      <th>主 TAM</th>
-                      <th>关联群</th>
-                      <th>消息数</th>
-                      <th>事件数</th>
+                      <td colSpan={6} role="status">
+                        正在读取客户…
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {customers.data?.items.map((item) => (
-                      <tr
-                        key={item.uid}
-                        className={selectedUid === item.uid ? 'selected' : ''}
-                      >
-                        <td>
-                          <button
-                            type="button"
-                            className="customer-link"
-                            title="查看客户资料"
-                            aria-pressed={selectedUid === item.uid}
-                            onClick={() => {
-                              select('uid', item.uid);
-                              setReview(false);
-                              setGroupOffset(0);
-                            }}
-                          >
-                            <span>
-                              <strong>
-                                {customerInfo(item.uid)?.label ||
-                                  `客户 ${item.uid}`}
-                              </strong>
-                              <small>UID {item.uid}</small>
+                  )}
+                  {customers.data?.items.map((item) => (
+                    <tr
+                      key={item.uid}
+                      className={selectedUid === item.uid ? 'selected' : ''}
+                    >
+                      <td>
+                        <button
+                          type="button"
+                          className="customer-link"
+                          title="查看客户资料"
+                          aria-pressed={selectedUid === item.uid}
+                          onClick={() => {
+                            select('uid', item.uid);
+                            setReview(false);
+                            setGroupOffset(0);
+                          }}
+                        >
+                          <span>
+                            <strong>
+                              {customerInfo(item.uid)?.label ||
+                                `客户 ${item.uid}`}
+                            </strong>
+                            <small>UID {item.uid}</small>
+                          </span>
+                          <ChevronRight size={14} aria-hidden="true" />
+                        </button>
+                      </td>
+                      <td>
+                        <div className="customer-level-cell">
+                          <strong>{item.level || '未知'}</strong>
+                          {item.is_super_large ? (
+                            <span className="customer-tier-pill super">
+                              <Crown size={11} />
+                              超级大客
                             </span>
-                            <ChevronRight size={14} aria-hidden="true" />
-                          </button>
-                        </td>
-                        <td>
-                          <div className="customer-level-cell">
-                            <strong>{item.level || '未知'}</strong>
-                            {item.is_super_large ? (
-                              <span className="customer-tier-pill super">
-                                <Crown size={11} />
-                                超级大客
-                              </span>
-                            ) : null}
-                          </div>
-                          {item.level_state !== 'fresh' && (
-                            <small className="customer-warning">
-                              {freshness[item.level_state] || '待确认'}
-                            </small>
-                          )}
-                        </td>
-                        <td>
-                          {item.tam || '—'}
-                          {item.tam_state !== 'fresh' && (
-                            <small className="customer-warning">
-                              {freshness[item.tam_state] || '待确认'}
-                            </small>
-                          )}
-                        </td>
-                        <td>{item.group_count}</td>
-                        <td>
-                          {customerInfo(
-                            item.uid,
-                          )?.message_count?.toLocaleString('zh-CN') ?? '—'}
-                        </td>
-                        <td>
-                          {savedEventCount(
-                            customerInfo(item.uid),
-                          )?.toLocaleString('zh-CN') ?? '—'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {customers.data?.total === 0 && (
-                  <div className="customer-empty">
-                    <UsersRound size={24} />
-                    <h3>
-                      {query || segment !== 'all'
-                        ? '没有符合筛选条件的客户'
-                        : '还没有发现客户'}
-                    </h3>
-                    <p>
-                      {query || segment !== 'all'
-                        ? '可切换客户范围或调整 UID 搜索条件。'
-                        : '同步一个有聊天的时间段后，客户资料会显示在这里。'}
-                    </p>
-                  </div>
-                )}
-              </div>
+                          ) : null}
+                        </div>
+                        {item.level_state !== 'fresh' && (
+                          <small className="customer-warning">
+                            {freshness[item.level_state] || '待确认'}
+                          </small>
+                        )}
+                      </td>
+                      <td>
+                        {item.tam || '—'}
+                        {item.tam_state !== 'fresh' && (
+                          <small className="customer-warning">
+                            {freshness[item.tam_state] || '待确认'}
+                          </small>
+                        )}
+                      </td>
+                      <td>{item.group_count}</td>
+                      <td>
+                        {customerInfo(item.uid)?.message_count?.toLocaleString(
+                          'zh-CN',
+                        ) ?? '—'}
+                      </td>
+                      <td>
+                        {savedEventCount(
+                          customerInfo(item.uid),
+                        )?.toLocaleString('zh-CN') ?? '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {customers.data?.total === 0 && (
+                <div className="customer-empty">
+                  <UsersRound size={24} />
+                  <h3>
+                    {query || segment !== 'all'
+                      ? '没有符合筛选条件的客户'
+                      : '还没有发现客户'}
+                  </h3>
+                  <p>
+                    {query || segment !== 'all'
+                      ? '可切换客户范围或调整 UID 搜索条件。'
+                      : '同步一个有聊天的时间段后，客户资料会显示在这里。'}
+                  </p>
+                </div>
+              )}
+            </div>
+            {customers.data && (
+              <Paging
+                offset={offset}
+                total={customers.data.total}
+                pageSize={pageSize}
+                loading={customers.loading}
+                onSizeChange={(size) => {
+                  setPageSize(size);
+                  const next = new URLSearchParams(params);
+                  next.delete('uid');
+                  setParams(next);
+                }}
+                onChange={(value) => {
+                  setOffset(value);
+                  const next = new URLSearchParams(params);
+                  next.delete('uid');
+                  setParams(next);
+                }}
+              />
             )}
-            <Paging
-              offset={offset}
-              total={customers.data?.total || 0}
-              pageSize={pageSize}
-              loading={customers.loading}
-              onSizeChange={(size) => {
-                setPageSize(size);
-                const next = new URLSearchParams(params);
-                next.delete('uid');
-                setParams(next);
-              }}
-              onChange={(value) => {
-                setOffset(value);
-                const next = new URLSearchParams(params);
-                next.delete('uid');
-                setParams(next);
-              }}
-            />
           </section>
           <aside className="customer-profile-panel" aria-label="客户资料">
             <h2>客户资料</h2>
             {selected ? (
               <>
-                <h3 className="customer-profile-name">
-                  {profile?.label || `客户 ${selected.uid}`}
-                </h3>
+                {hasCustomerName && (
+                  <h3 className="customer-profile-name">{name}</h3>
+                )}
                 <div className="customer-profile-uid">
-                  UID {selected.uid}
+                  {hasCustomerName ? (
+                    <span>UID {selected.uid}</span>
+                  ) : (
+                    <h3 className="customer-profile-name">
+                      客户 {selected.uid}
+                    </h3>
+                  )}
                   <button
                     type="button"
                     aria-label="复制客户 UID"
@@ -510,30 +528,12 @@ export default function CustomersPage() {
                       : segmentLabels[selected.segment]}
                   </span>
                 </div>
-                <dl className="customer-activity" aria-label="客户活动">
-                  <div>
-                    <dt>关联群</dt>
-                    <dd>{selected.group_count.toLocaleString('zh-CN')}</dd>
-                  </div>
-                  <div>
-                    <dt>消息</dt>
-                    <dd>
-                      {profile?.message_count?.toLocaleString('zh-CN') ?? '—'}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>事件</dt>
-                    <dd>
-                      {savedEventCount(profile)?.toLocaleString('zh-CN') ?? '—'}
-                    </dd>
-                  </div>
-                </dl>
-                <Link
-                  className="customer-enter"
-                  to={`/events?uid=${selected.uid}`}
-                >
-                  进入工作台 <ArrowUpRight size={15} aria-hidden="true" />
-                </Link>
+                {selected.level_state !== 'fresh' && (
+                  <p className="customer-warning">
+                    等级{freshness[selected.level_state] || '待确认'}
+                    ，旧等级仅供参考。
+                  </p>
+                )}
                 <section className="customer-owner">
                   <h2>负责人</h2>
                   <dl>
@@ -546,27 +546,44 @@ export default function CustomersPage() {
                     {freshness[selected.tam_state] || '待确认'} · 最近查询{' '}
                     {formatTime(selected.attempted_at)}
                   </p>
-                  {selected.level_state !== 'fresh' && (
-                    <p className="customer-warning">
-                      等级{freshness[selected.level_state] || '待确认'}
-                      ，旧等级仅供参考。
-                    </p>
-                  )}
+                </section>
+                <section className="customer-owner customer-events">
+                  <div className="customer-section-heading">
+                    <h2>客户事件{eventCount != null && `（${eventCount}）`}</h2>
+                    <Link
+                      className="customer-enter"
+                      to={`/events?uid=${selected.uid}`}
+                    >
+                      查看该客户事件{' '}
+                      <ArrowUpRight size={14} aria-hidden="true" />
+                    </Link>
+                  </div>
+                  <p className="customer-muted">
+                    {profile?.latest_event_time
+                      ? `当前版本最近事件 · ${formatTime(profile.latest_event_time)}`
+                      : profile
+                        ? eventCount === 0
+                          ? '暂无已保存事件'
+                          : '当前版本暂无最近事件时间'
+                        : '暂无事件统计'}
+                  </p>
                 </section>
               </>
             ) : (
               <p className="customer-empty">
-                {uid
-                  ? '当前列表中没有该客户，请调整筛选或选择其他客户。'
-                  : '选择客户查看资料'}
+                {customers.loading && !customers.data
+                  ? '正在读取客户资料…'
+                  : uid
+                    ? '当前列表中没有该客户，请调整筛选或选择其他客户。'
+                    : '选择客户查看资料'}
               </p>
             )}
             <div className="customer-group-heading">
               <h2>
                 {review
                   ? '归属待确认'
-                  : selectedUid
-                    ? `关联群（${groups.data?.total ?? 0}）`
+                  : selected
+                    ? `关联群（${groups.data?.total ?? selected.group_count}）`
                     : '关联群'}
               </h2>
               <Button
@@ -584,30 +601,42 @@ export default function CustomersPage() {
               <ErrorNotice message={groups.error} retry={groups.refresh} />
             )}
             {groups.loading && !groups.data ? (
-              <LoadingRows />
+              <p role="status" className="customer-group-loading">
+                正在读取关联群…
+              </p>
             ) : groups.data ? (
               <>
                 <div className="customer-group-list">
                   {groups.data.items.map((group) => (
-                    <article key={`${group.source}:${group.group_id}`}>
-                      <div>
-                        <strong>{group.group_name || '群名未知'}</strong>
-                        <span
-                          className={
-                            group.status === 'review' ? 'customer-warning' : ''
-                          }
-                        >
-                          {group.status === 'review' ? '待确认' : '已确认'}
-                        </span>
-                      </div>
-                      <small>
-                        群 {group.group_id} · 客户 {group.uid || '未知'}
-                      </small>
-                      <p>{group.reason}</p>
-                      {group.status === 'review' &&
-                        group.candidate_uids.length > 0 && (
-                          <p>候选客户：{group.candidate_uids.join('、')}</p>
+                    <article
+                      key={`${selectedUid}:${group.source}:${group.group_id}`}
+                    >
+                      <details>
+                        <summary>
+                          <ChevronRight size={14} aria-hidden="true" />
+                          <strong>{group.group_name || '群名未知'}</strong>
+                          <span
+                            className={
+                              group.status === 'review'
+                                ? 'customer-warning'
+                                : ''
+                            }
+                          >
+                            {group.status === 'review' ? '待确认' : '已确认'}
+                          </span>
+                        </summary>
+                        <small>
+                          群 {group.group_id} · 客户 {group.uid || '未知'}
+                        </small>
+                        <p>{group.reason}</p>
+                        {group.last_seen_at && (
+                          <p>最近发现 {formatTime(group.last_seen_at)}</p>
                         )}
+                        {group.status === 'review' &&
+                          group.candidate_uids.length > 0 && (
+                            <p>候选客户：{group.candidate_uids.join('、')}</p>
+                          )}
+                      </details>
                     </article>
                   ))}
                 </div>
@@ -624,7 +653,7 @@ export default function CustomersPage() {
                   onChange={setGroupOffset}
                 />
               </>
-            ) : (
+            ) : groups.error ? null : (
               <p className="customer-empty">
                 选择客户查看关联群，或查看全部待确认群。
               </p>

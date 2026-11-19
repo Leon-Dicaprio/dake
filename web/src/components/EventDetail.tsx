@@ -118,7 +118,7 @@ export function EventDetail({
                   <dd>{formatTime(event.end_time)}</dd>
                 </div>
               </dl>
-              <ClassificationDetails event={event} />
+              <ClassificationDetails key={event.event_id} event={event} />
               <section className="detail-section">
                 <h3>
                   <MessagesSquare size={15} />

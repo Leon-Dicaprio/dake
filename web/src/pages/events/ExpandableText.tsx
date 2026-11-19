@@ -25,7 +25,12 @@ export function ExpandableText({
       return;
     }
     if (open) return;
-    setOverflows(node.scrollHeight > node.clientHeight + 1);
+    const measure = () =>
+      setOverflows(node.scrollHeight > node.clientHeight + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
   }, [open, value]);
 
   if (!value) {
@@ -49,6 +54,7 @@ export function ExpandableText({
         <button
           type="button"
           className="expandable-toggle"
+          aria-expanded={open}
           onClick={() => setOpen((current) => !current)}
         >
           {open ? '收起' : '展开'}

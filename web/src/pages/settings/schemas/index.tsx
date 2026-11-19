@@ -1,13 +1,13 @@
 import {
-  Check,
   ChevronDown,
+  ChevronRight,
   History,
   Pencil,
   Plus,
   RefreshCw,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ErrorNotice, LoadingRows } from '@/components/Feedback';
+import { ErrorNotice, LoadingRows, SuccessToast } from '@/components/Feedback';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeading } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -85,6 +85,7 @@ export default function AttributeSchemasPage() {
   const [productDraft, setProductDraft] = useState<ProductDraft>();
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>();
   const [backfillOpen, setBackfillOpen] = useState(false);
+  const [showResult, setShowResult] = useState(false);
   const [backfillScope, setBackfillScope] = useState<'all' | 'current'>('all');
   const [onlyMissing, setOnlyMissing] = useState(false);
 
@@ -259,7 +260,7 @@ export default function AttributeSchemasPage() {
           enabled: !item.enabled,
         },
       });
-      setNotice(`字段「${item.label}」已${!item.enabled ? '启用' : '停用'}。`);
+      setNotice(`字段已${!item.enabled ? '启用' : '停用'}。`);
       registry.refresh();
       analytics.refresh();
     } catch (cause) {
@@ -378,14 +379,14 @@ export default function AttributeSchemasPage() {
           expected_version: registry.data.version,
           field_id: deleteTarget.id,
         });
-        setNotice(`已删除自定义字段「${deleteTarget.label}」。`);
+        setNotice('已删除自定义字段。');
       } else {
         await api.deleteProductSchema({
           expected_version: registry.data.version,
           product_key: deleteTarget.key,
         });
         setSelected(undefined);
-        setNotice(`已删除自定义产品「${deleteTarget.label}」。`);
+        setNotice('已删除自定义产品。');
       }
       setDeleteTarget(undefined);
       registry.refresh();
@@ -467,7 +468,19 @@ export default function AttributeSchemasPage() {
     .filter(Boolean)
     .join(' · ');
 
+  const jobStatus = job.data?.status;
+  const result = job.data?.result;
+  const hasResult = jobStatus === 'completed' || jobStatus === 'failed';
+  const jobSummary =
+    jobStatus === 'failed'
+      ? '补齐失败'
+      : result?.failed
+        ? `失败 ${result.failed} 条`
+        : result
+          ? `已更新 ${result.updated} 条`
+          : '补齐已完成';
   function openBackfill() {
+    setShowResult(hasResult);
     setError('');
     setBackfillScope('all');
     setBackfillOpen(true);
@@ -485,11 +498,23 @@ export default function AttributeSchemasPage() {
         <div className="schemas-header-actions">
           <Button
             variant="secondary"
-            disabled={!registry.data || job.data?.status === 'running'}
+            className="backfill-action"
+            disabled={
+              !job.data ||
+              Boolean(job.error) ||
+              (!hasResult && !registry.data) ||
+              jobStatus === 'running'
+            }
+            aria-label={hasResult ? `${jobSummary}，查看补齐结果` : undefined}
             onClick={openBackfill}
           >
             <History size={15} />
-            补齐历史字段
+            {hasResult
+              ? jobSummary
+              : jobStatus === 'running'
+                ? '后台补齐中'
+                : '补齐历史字段'}
+            {hasResult && <ChevronRight size={14} />}
           </Button>
           <Button
             variant="ghost"
@@ -514,27 +539,15 @@ export default function AttributeSchemasPage() {
         </div>
       </header>
 
-      {job.data?.status === 'running' && (
-        <p role="status" className="schemas-save-notice">
-          历史字段正在后台补齐，可以离开此页。
-        </p>
-      )}
-      {job.data?.result && (
-        <p role="status" className="schemas-save-notice">
-          本次历史字段补齐结束，已更新 {job.data.result.updated} 条，失败{' '}
-          {job.data.result.failed} 条。
-        </p>
-      )}
-      {job.data?.status === 'failed' && (
-        <ErrorNotice message="后台补齐失败，请核对执行情况后再试。" />
-      )}
+      <span className="sr-only" role="status">
+        {jobStatus === 'running'
+          ? '历史字段正在后台补齐，可以离开此页。'
+          : hasResult
+            ? jobSummary
+            : ''}
+      </span>
       {job.error && <ErrorNotice message={job.error} retry={job.refresh} />}
-      {notice && (
-        <p role="status" className="schemas-save-notice">
-          <Check size={16} aria-hidden="true" />
-          {notice}
-        </p>
-      )}
+      <SuccessToast message={notice} onDismiss={() => setNotice('')} />
       {registry.error && (
         <ErrorNotice message={registry.error} retry={registry.refresh} />
       )}
@@ -559,7 +572,14 @@ export default function AttributeSchemasPage() {
 
         <TabsContent value="config">
           {registry.loading && !registry.data ? (
-            <LoadingRows />
+            <div className="schemas-layout" aria-busy="true">
+              <div className="scope-navigation">
+                <LoadingRows count={1} />
+              </div>
+              <div className="scope-workspace">
+                <LoadingRows count={3} />
+              </div>
+            </div>
           ) : registry.data ? (
             <div className="schemas-layout">
               <ScopeNavigation
@@ -1119,73 +1139,109 @@ export default function AttributeSchemasPage() {
           {...dialogFocus}
           className="dialog-centered schemas-dialog-compact"
         >
-          <DialogHeading
-            title="补齐历史字段"
-            description="按已启用的字段重新检查历史事件，每次最多处理 150 条。"
-          />
-          {error && backfillOpen && <ErrorNotice message={error} />}
-          <div className="flex flex-col gap-2.5 my-2">
-            <span className="schemas-field-title">选择补齐范围</span>
-            <label
-              className={`schemas-radio-option ${backfillScope === 'all' ? 'selected' : ''}`}
-            >
-              <input
-                type="radio"
-                name="backfill-scope"
-                checked={backfillScope === 'all'}
-                onChange={() => setBackfillScope('all')}
+          {showResult ? (
+            <>
+              <DialogHeading
+                title="最近一次补齐结果"
+                description={
+                  jobStatus === 'failed'
+                    ? '后台补齐失败，请核对执行情况后再试。'
+                    : result?.failed
+                      ? '部分事件补齐失败。'
+                      : '本次历史字段补齐已完成。'
+                }
               />
-              <div>
-                <div className="font-medium text-sm text-neutral-900">
-                  全部历史事件
-                </div>
-              </div>
-            </label>
-            {backfillLabel && (
-              <label
-                className={`schemas-radio-option ${backfillScope === 'current' ? 'selected' : ''}`}
-              >
-                <input
-                  type="radio"
-                  name="backfill-scope"
-                  checked={backfillScope === 'current'}
-                  onChange={() => setBackfillScope('current')}
-                />
-                <div>
-                  <div className="font-medium text-sm text-neutral-900">
-                    当前范围 · {backfillLabel}
-                  </div>
-                  {backfillProduct && (
-                    <small className="text-xs text-neutral-500">
-                      也会检查尚未识别产品的事件。
-                    </small>
-                  )}
-                </div>
-              </label>
-            )}
-
-            <label className="schemas-check-chip mt-1">
-              <input
-                type="checkbox"
-                checked={onlyMissing}
-                onChange={(e) => setOnlyMissing(e.target.checked)}
-              />
-              <span>仅处理尚无字段值的事件</span>
-            </label>
-          </div>
-          <div className="dialog-actions">
-            <Button variant="secondary" disabled={busy} onClick={closeDialog}>
-              取消
-            </Button>
-            <Button variant="primary" disabled={busy} onClick={runBackfill}>
-              {busy ? (
-                <RefreshCw size={15} className="spinning" />
-              ) : (
-                <History size={15} />
+              {result && (
+                <p className="backfill-summary">
+                  扫描 {result.scanned} 条，更新 {result.updated}{' '}
+                  条，其中模型补充 {result.llm_enriched} 条。失败{' '}
+                  {result.failed} 条。
+                </p>
               )}
-              {busy ? '正在提交…' : '开始补齐'}
-            </Button>
-          </div>
+              <div className="dialog-actions">
+                <Button
+                  disabled={!registry.data || !hasResult || Boolean(job.error)}
+                  onClick={() => setShowResult(false)}
+                >
+                  再次补齐…
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <DialogHeading
+                title="补齐历史字段"
+                description="按已启用的字段重新检查历史事件，每次最多处理 150 条。"
+              />
+              {error && backfillOpen && <ErrorNotice message={error} />}
+              <div className="flex flex-col gap-2.5 my-2">
+                <span className="schemas-field-title">选择补齐范围</span>
+                <label
+                  className={`schemas-radio-option ${backfillScope === 'all' ? 'selected' : ''}`}
+                >
+                  <input
+                    type="radio"
+                    name="backfill-scope"
+                    checked={backfillScope === 'all'}
+                    onChange={() => setBackfillScope('all')}
+                  />
+                  <div>
+                    <div className="font-medium text-sm text-neutral-900">
+                      全部历史事件
+                    </div>
+                  </div>
+                </label>
+                {backfillLabel && (
+                  <label
+                    className={`schemas-radio-option ${backfillScope === 'current' ? 'selected' : ''}`}
+                  >
+                    <input
+                      type="radio"
+                      name="backfill-scope"
+                      checked={backfillScope === 'current'}
+                      onChange={() => setBackfillScope('current')}
+                    />
+                    <div>
+                      <div className="font-medium text-sm text-neutral-900">
+                        当前范围 · {backfillLabel}
+                      </div>
+                      {backfillProduct && (
+                        <small className="text-xs text-neutral-500">
+                          也会检查尚未识别产品的事件。
+                        </small>
+                      )}
+                    </div>
+                  </label>
+                )}
+
+                <label className="schemas-check-chip mt-1">
+                  <input
+                    type="checkbox"
+                    checked={onlyMissing}
+                    onChange={(e) => setOnlyMissing(e.target.checked)}
+                  />
+                  <span>仅处理尚无字段值的事件</span>
+                </label>
+              </div>
+              <div className="dialog-actions">
+                <Button
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={closeDialog}
+                >
+                  取消
+                </Button>
+                <Button variant="primary" disabled={busy} onClick={runBackfill}>
+                  {busy ? (
+                    <RefreshCw size={15} className="spinning" />
+                  ) : (
+                    <History size={15} />
+                  )}
+                  {busy ? '正在提交…' : '开始补齐'}
+                </Button>
+              </div>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </main>

@@ -1,4 +1,12 @@
-import { ArrowRight, Inbox, RefreshCw, TriangleAlert } from 'lucide-react';
+import * as Toast from '@radix-ui/react-toast';
+import {
+  ArrowRight,
+  Check,
+  Inbox,
+  RefreshCw,
+  TriangleAlert,
+  X,
+} from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Button } from './ui/button';
 
@@ -68,5 +76,39 @@ export function LoadingRows({ count = 5 }: { count?: number }) {
           </div>
         ))}
     </div>
+  );
+}
+
+/** 短操作回执在固定浮层展示，支持键盘关闭与悬停暂停。 */
+export function SuccessToast({
+  message,
+  onDismiss,
+}: {
+  message: string;
+  onDismiss: () => void;
+}) {
+  return (
+    <Toast.Provider label="操作提示">
+      {message && (
+        <Toast.Root
+          key={message}
+          open
+          onOpenChange={(open) => {
+            if (!open) onDismiss();
+          }}
+          className="success-toast"
+        >
+          <Check size={16} aria-hidden="true" />
+          <Toast.Description>{message}</Toast.Description>
+          <Toast.Close aria-label="关闭提示">
+            <X size={16} />
+          </Toast.Close>
+        </Toast.Root>
+      )}
+      <Toast.Viewport
+        className="success-toast-viewport"
+        label="操作提示（{hotkey}）"
+      />
+    </Toast.Provider>
   );
 }

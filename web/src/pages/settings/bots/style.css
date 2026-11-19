@@ -48,6 +48,8 @@
   border-bottom: 1px solid var(--line);
 }
 .bot-rule-table {
+  min-width: 720px;
+  table-layout: fixed;
   width: 100%;
   border-collapse: collapse;
   text-align: left;
@@ -64,6 +66,9 @@
 .bot-rule-table td {
   padding: 15px 16px;
   border-bottom: 1px solid #eeeef1;
+}
+.bot-rule-table td {
+  overflow-wrap: anywhere;
 }
 .bot-rule-table tr:last-child td {
   border-bottom: 0;
@@ -110,12 +115,24 @@
   margin-left: 8px;
 }
 .bot-empty {
+  height: 6rem;
   color: #8b8b92;
   text-align: center;
 }
-.bot-save-notice {
-  color: #2d7345;
-  font-size: 14px;
+.bot-rule-count {
+  min-height: 1.5em;
+}
+.bot-rule-table th:nth-last-child(3) {
+  width: 8rem;
+}
+.bot-rule-table th:nth-last-child(2) {
+  width: 6rem;
+}
+.bot-rule-table th:last-child {
+  width: 10rem;
+}
+.bot-table-panel .loading-row {
+  height: 3rem;
 }
 .bot-paging {
   margin-top: 16px;
@@ -150,8 +167,5 @@
 @media (max-width: 720px) {
   .bot-search-form {
     flex-wrap: wrap;
-  }
-  .bot-rule-table {
-    min-width: 720px;
   }
 }

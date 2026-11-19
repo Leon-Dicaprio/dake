@@ -542,7 +542,7 @@ export function EventPane({
           <ClassificationDetails
             event={event}
             evidence={evidence}
-            onLocate={locate}
+            onLocate={(message) => locate(evidenceKey(message))}
           />
           <RecoveryDetails event={event} />
           <section className="aside-timeline" aria-label="历次变化">

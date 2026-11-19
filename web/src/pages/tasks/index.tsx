@@ -389,7 +389,9 @@ export default function TasksPage() {
                 </TabsContent>
               </Tabs>
             </>
-          ) : (
+          ) : tasks.loading && !tasks.data ? (
+            <LoadingRows count={2} />
+          ) : tasks.error && !tasks.data ? null : (
             <EmptyState
               title="让大客户处理持续运行"
               description="选择客户范围与处理频率，再随时查看执行进度。"

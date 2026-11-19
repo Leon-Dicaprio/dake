@@ -1,4 +1,8 @@
+import { useState } from 'react';
 import { formatMetricNumber, productDisplayName } from '@/lib/productLabels';
+
+const PRODUCT_PREVIEW_COUNT = 3;
+const FIELD_PREVIEW_COUNT = 4;
 
 type FactRecord = {
   value?: unknown;
@@ -49,8 +53,10 @@ export function ClassificationDetails({
 }: {
   event: API.EventResponse;
   evidence?: API.EvidenceResponse[];
-  onLocate?: (evidenceKeyValue: string) => void;
+  onLocate?: (message: API.EvidenceResponse) => void;
 }) {
+  const [allProducts, setAllProducts] = useState(false);
+  const [allFields, setAllFields] = useState(false);
   const typeEvidence = event.type_evidence || {};
   const removedTypes = event.removed_types || {};
   const otherReason = event.other_reason;
@@ -80,8 +86,7 @@ export function ClassificationDetails({
     if (!onLocate) return;
     const matched = evidence.find((item) => item.message_id === mid);
     if (!matched) return;
-    const key = `${matched.source}:${matched.message_id}:${matched.digest || ''}`;
-    onLocate(key);
+    onLocate(matched);
   }
 
   return (
@@ -93,64 +98,99 @@ export function ClassificationDetails({
           {hasProducts ? (
             <div className="typed-attr-header flex flex-wrap items-center gap-2">
               <span className="text-xs font-medium text-neutral-500">
-                涉及产品：
+                涉及产品
               </span>
-              {products.map((pkey) => (
-                <span
-                  key={pkey}
-                  className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900 ring-1 ring-amber-200/80 ring-inset"
+              {products
+                .slice(0, allProducts ? products.length : PRODUCT_PREVIEW_COUNT)
+                .map((pkey) => (
+                  <span
+                    key={pkey}
+                    className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900 ring-1 ring-amber-200/80 ring-inset"
+                  >
+                    {productDisplayName(pkey)}
+                  </span>
+                ))}
+              {products.length > PRODUCT_PREVIEW_COUNT && (
+                <button
+                  type="button"
+                  className="attr-list-toggle"
+                  aria-expanded={allProducts}
+                  onClick={() => setAllProducts(!allProducts)}
                 >
-                  {productDisplayName(pkey)}
-                </span>
-              ))}
+                  {allProducts
+                    ? '收起产品'
+                    : `展开其余 ${products.length - PRODUCT_PREVIEW_COUNT} 个产品`}
+                </button>
+              )}
             </div>
           ) : null}
           {hasStructured ? (
             <dl className="typed-attr-list">
-              {structuredEvidence.map((item, idx) => {
-                const label = String(
-                  item.label || item.field_id || `字段${idx}`,
-                );
-                const unit = typeof item.unit === 'string' ? item.unit : '';
-                const formatted = formatMetricNumber(
-                  item.normalized_value,
-                  unit,
-                );
-                const quote = typeof item.quote === 'string' ? item.quote : '';
-                const mids = messageRefIds({
-                  evidence_ids: item.evidence_ids,
-                });
-                return (
-                  <div key={String(item.field_id || idx)}>
-                    <dt>{label}</dt>
-                    <dd>
-                      <span className="font-medium">{formatted}</span>
-                      {quote || mids.length ? (
-                        <small className="typed-attr-proof">
-                          {quote ? `「${quote}」` : ''}
-                          {mids.map((mid) =>
-                            onLocate &&
-                            evidence.some((e) => e.message_id === mid) ? (
-                              <button
-                                key={mid}
-                                type="button"
-                                className="evidence-locate"
-                                onClick={() => locateByMessageId(mid)}
-                              >
-                                消息 {mid}
-                              </button>
-                            ) : (
-                              <span key={mid}> 消息 {mid}</span>
-                            ),
-                          )}
-                        </small>
-                      ) : null}
-                    </dd>
-                  </div>
-                );
-              })}
+              {structuredEvidence
+                .slice(
+                  0,
+                  allFields ? structuredEvidence.length : FIELD_PREVIEW_COUNT,
+                )
+                .map((item, idx) => {
+                  const label = String(
+                    item.label || item.field_id || `字段${idx}`,
+                  );
+                  const unit = typeof item.unit === 'string' ? item.unit : '';
+                  const formatted = formatMetricNumber(
+                    item.normalized_value,
+                    unit,
+                  );
+                  const quote =
+                    typeof item.quote === 'string' ? item.quote : '';
+                  const mids = messageRefIds({
+                    evidence_ids: item.evidence_ids,
+                  });
+                  return (
+                    <div key={String(item.field_id || idx)}>
+                      <dt>{label}</dt>
+                      <dd>
+                        <span className="font-medium">{formatted}</span>
+                        {quote || mids.length ? (
+                          <details className="typed-attr-proof">
+                            <summary aria-label={`查看「${label}」的依据`}>
+                              依据
+                            </summary>
+                            {quote && <blockquote>{quote}</blockquote>}
+                            {mids.map((mid) =>
+                              onLocate &&
+                              evidence.some((e) => e.message_id === mid) ? (
+                                <button
+                                  key={mid}
+                                  type="button"
+                                  className="evidence-locate"
+                                  onClick={() => locateByMessageId(mid)}
+                                >
+                                  消息 {mid}
+                                </button>
+                              ) : (
+                                <span key={mid}> 消息 {mid}</span>
+                              ),
+                            )}
+                          </details>
+                        ) : null}
+                      </dd>
+                    </div>
+                  );
+                })}
             </dl>
           ) : null}
+          {structuredEvidence.length > FIELD_PREVIEW_COUNT && (
+            <button
+              type="button"
+              className="attr-list-toggle"
+              aria-expanded={allFields}
+              onClick={() => setAllFields(!allFields)}
+            >
+              {allFields
+                ? '收起字段'
+                : `展开其余 ${structuredEvidence.length - FIELD_PREVIEW_COUNT} 个字段`}
+            </button>
+          )}
         </div>
       ) : null}
 
