@@ -237,8 +237,7 @@ class XHubStructuredExtractor:
         *,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        if config.base_url.rstrip("/") not in {"https://llmapi.qiniu.io", "https://llmapi.qiniu.io/v1"}:
-            raise XHubError("仅允许已确认的 XHub 地址")
+        config.validate_endpoint()
         self.config = config
         self.settings = settings
         self.schema = strict_schema(StructuredExtractionOutput.model_json_schema())
